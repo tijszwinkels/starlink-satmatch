@@ -81,6 +81,17 @@ def _load_test_sats(n=None):
     return sats[:n] if n else sats
 
 
+def test_dtc_included_by_default():
+    sats = _load_test_sats()
+    if sats is None:
+        return
+    assert any("[DTC]" in s.name for s in sats), "DTC missing from default load"
+    excl = tle.parse_tle_file(tle.CACHE_DIR / "sup-starlink.tle",
+                              include_dtc=False)
+    assert not any("[DTC]" in s.name for s in excl)
+    assert len(excl) < len(sats)
+
+
 def test_batch_altaz_vs_skyfield():
     try:
         from skyfield.api import EarthSatellite, load, wgs84

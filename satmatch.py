@@ -376,7 +376,7 @@ def cmd_info(args):
     """Standalone lookup: satmatch.py info STARLINK-5539 55747 ..."""
     import satinfo
     sats, _, _ = load_catalogue(args.catalog, args.tle_max_age,
-                                include_dtc=True, offline=args.offline)
+                                offline=args.offline)
     by_name = {s.name.replace(" [DTC]", ""): s for s in sats}
     by_norad = {s.norad: s for s in sats}
     satcat = satinfo.load_satcat(offline=args.offline)
@@ -482,10 +482,10 @@ def cmd_locate(args):
 def cmd_tle(args):
     sats, catalog, age = load_catalogue(
         args.catalog, 0.0 if args.refresh else args.tle_max_age,
-        include_dtc=True, offline=args.offline)
+        offline=args.offline)
     dtc = sum(1 for s in sats if "[DTC]" in s.name)
     print(f"{catalog} catalogue: {len(sats)} satellites "
-          f"({dtc} direct-to-cell, excluded from matching), {age:.1f} h old")
+          f"({dtc} direct-to-cell, included in matching), {age:.1f} h old")
 
 
 def main():

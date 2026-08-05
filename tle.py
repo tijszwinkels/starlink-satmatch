@@ -8,9 +8,13 @@ Two CelesTrak sources:
 Default is "sup" with fallback to "group". Files are cached next to this
 module in tle_cache/ and refreshed when older than --tle-max-age hours.
 
-Direct-to-cell satellites (name tagged "[DTC]" by CelesTrak) are filtered
-out by default: they serve phones, not dishes, and pollute matching
-(recommendation from arXiv:2601.13790).
+Direct-to-cell satellites (name tagged "[DTC]" by CelesTrak) are included
+by default: they carry the standard Ku/Ka broadband payload alongside the
+cellular one, so they can serve dishes too. arXiv:2601.13790 recommended
+filtering them out; pass include_dtc=False to reproduce that. (Checked on
+27 logged segments at 62N: no DTC bird ever matched — at that latitude
+they top out ~15 deg elevation — so either default gives identical
+results there; below ~55N inclusion genuinely matters.)
 """
 
 import logging
@@ -72,7 +76,7 @@ def download(catalog: str) -> Path:
     return path
 
 
-def parse_tle_file(path: Path, include_dtc: bool = False):
+def parse_tle_file(path: Path, include_dtc: bool = True):
     """Parse a 3-line-element file into Satellite objects."""
     sats = []
     lines = path.read_text().splitlines()
@@ -87,7 +91,7 @@ def parse_tle_file(path: Path, include_dtc: bool = False):
 
 
 def load_catalogue(catalog: str = "sup", max_age_hours: float = 12.0,
-                   include_dtc: bool = False, offline: bool = False):
+                   include_dtc: bool = True, offline: bool = False):
     """Return (list[Satellite], catalog_used, age_hours), refreshing the cache
     when stale. Falls back to the other source, then to a stale cache."""
     order = [catalog, "group" if catalog == "sup" else "sup"]
