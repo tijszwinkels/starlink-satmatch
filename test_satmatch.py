@@ -1,0 +1,279 @@
+#!/usr/bin/env python3
+"""Tests for satmatch. Run: venv/bin/python satmatch/test_satmatch.py
+
+Uses plain asserts + a tiny runner (no pytest dependency). The propagation
+oracle test and the end-to-end test need the cached TLE file and skyfield.
+"""
+
+import math
+import sys
+from datetime import timedelta, timezone, datetime
+
+import numpy as np
+
+from geometry import (FRAME_EARTH, FRAME_UT, MapGeometry, angular_separation_deg,
+                      azel_to_pixel, azel_to_pixel_bs, bearing_deg, pixel_to_azel,
+                      roll_from_quaternion)
+from matcher import Segment, extract_trail, annotate_azel, segment_trail, score_segment
+from propagation import batch_altaz, gstime_rad
+import tle
+
+GEOM = MapGeometry()
+TILT = 26.0
+BS_AZ = -59.8  # matches the real dish: WNW-facing, ~26 deg tilt
+TEST_LAT, TEST_LON, TEST_ALT = 59.95, 10.75, 100.0
+
+
+class FakeSample:
+    def __init__(self, t, lit):
+        self.t = t
+        self.lit = lit
+
+
+class FakeState:
+    # zero-roll dish state matching the synthetic renders
+    boresight_el_deg = 90.0 - TILT
+    boresight_az_deg = BS_AZ
+    tilt_deg = TILT
+    ned2dish_q = None
+
+
+STATE = FakeState()
+
+
+def test_roundtrip_frames():
+    for frame in (FRAME_EARTH, FRAME_UT):
+        for el in (15.0, 40.0, 64.0, 85.0):
+            for az in (0.0, 47.0, 180.0, 300.2):
+                x, y = azel_to_pixel(el, az, frame, GEOM, TILT, BS_AZ)
+                el2, az2 = pixel_to_azel(x, y, frame, GEOM, TILT, BS_AZ)
+                sep = angular_separation_deg(el, az, el2, az2)
+                assert sep < 1e-6, (frame, el, az, el2, az2)  # acos noise near 0
+
+
+def test_frame_ut_center_is_boresight():
+    el, az = pixel_to_azel(GEOM.center, GEOM.center, FRAME_UT, GEOM, TILT, BS_AZ)
+    assert abs(el - (90.0 - TILT)) < 1e-9, el          # boresight elevation
+    assert abs((az - BS_AZ % 360.0)) % 360.0 < 1e-9, az  # boresight azimuth
+
+
+def test_frame_earth_up_is_north():
+    el, az = pixel_to_azel(GEOM.center, 10.0, FRAME_EARTH, GEOM)
+    assert az < 1e-9, az
+    assert el < 90.0
+    # right of center = East
+    _, az = pixel_to_azel(GEOM.center + 20, GEOM.n_rows - GEOM.center, FRAME_EARTH, GEOM)
+    assert abs(az - 90.0) < 1.0, az
+
+
+def test_gstime_matches_sgp4():
+    from sgp4.propagation import gstime
+    for jd in (2451545.0, 2460000.5, 2461257.123):
+        assert abs(gstime_rad(jd) - gstime(jd)) < 1e-9
+
+
+def _load_test_sats(n=None):
+    path = tle.CACHE_DIR / "sup-starlink.tle"
+    if not path.exists():
+        print("  SKIP (no cached TLE file)")
+        return None
+    sats = tle.parse_tle_file(path)
+    return sats[:n] if n else sats
+
+
+def test_batch_altaz_vs_skyfield():
+    try:
+        from skyfield.api import EarthSatellite, load, wgs84
+    except ImportError:
+        print("  SKIP (skyfield not installed)")
+        return
+    path = tle.CACHE_DIR / "sup-starlink.tle"
+    if not path.exists():
+        print("  SKIP (no cached TLE file)")
+        return
+    lines = path.read_text().splitlines()
+    ts = load.timescale()
+    topos = wgs84.latlon(TEST_LAT, TEST_LON, TEST_ALT)
+
+    checked = 0
+    for i in range(0, 30, 3):
+        name, l1, l2 = lines[i].strip(), lines[i + 1], lines[i + 2]
+        sf_sat = EarthSatellite(l1, l2, name, ts)
+        # evaluate near this TLE's own epoch so SGP4 error is tiny
+        t0 = sf_sat.epoch.utc_datetime() + timedelta(minutes=30)
+        times = [t0, t0 + timedelta(seconds=200)]
+
+        el, az, rng, ok = batch_altaz([sf_sat.model], times,
+                                      TEST_LAT, TEST_LON, TEST_ALT)
+        assert ok.all(), name
+        for j, t in enumerate(times):
+            alt_o, az_o, dist_o = (sf_sat - topos).at(ts.from_datetime(t)).altaz()
+            sep = angular_separation_deg(el[0, j], az[0, j],
+                                         alt_o.degrees, az_o.degrees)
+            assert sep < 0.25, (name, sep)
+            assert abs(rng[0, j] - dist_o.km) < 5.0, (name, rng[0, j], dist_o.km)
+        checked += 1
+    assert checked == 10
+
+
+def _pick_visible_sat(sats, t, exclude=(), off_max=40.0):
+    """A satellite well inside the FOV cone and steadily visible."""
+    el, az, _, ok = batch_altaz([s.satrec for s in sats], [t], TEST_LAT,
+                                TEST_LON, TEST_ALT)
+    best = None
+    for i, s in enumerate(sats):
+        if s.norad in exclude or not ok[i, 0] or not (30.0 < el[i, 0] < 78.0):
+            continue
+        off = angular_separation_deg(el[i, 0], az[i, 0], 90.0 - TILT, BS_AZ % 360)
+        if off < off_max and (best is None or off < best[1]):
+            best = (i, off)
+    return sats[best[0]] if best else None
+
+
+def _render_track(target, t0, n=15):
+    """Render a satellite's true sky track into accumulating fake maps."""
+    times = [t0 + timedelta(seconds=k) for k in range(n)]
+    el, az, _, ok = batch_altaz([target.satrec], times, TEST_LAT, TEST_LON, TEST_ALT)
+    assert ok.all()
+    lit = np.zeros((GEOM.n_rows, GEOM.n_cols), dtype=bool)
+    samples = []
+    for k, t in enumerate(times):
+        x, y = azel_to_pixel_bs(el[0, k], az[0, k], GEOM,
+                                90.0 - TILT, BS_AZ, 0.0)
+        lit = lit.copy()
+        lit[round(y), round(x)] = True
+        samples.append(FakeSample(t.timestamp(), lit))
+    return samples
+
+
+def test_end_to_end_synthetic():
+    sats = _load_test_sats()
+    if sats is None:
+        return
+    t0 = datetime.now(timezone.utc)
+    target = None
+    while target is None:  # scan forward until a satellite is in the cone
+        target = _pick_visible_sat(sats, t0)
+        if target is None:
+            t0 += timedelta(minutes=2)
+    samples = _render_track(target, t0)
+
+    points = extract_trail(samples)
+    assert len(points) >= 5, len(points)  # slow tracks revisit pixels
+    annotate_azel(points, FRAME_UT, GEOM, STATE)
+    segments = segment_trail(points)
+    assert len(segments) == 1, [len(s.points) for s in segments]
+    seg = score_segment(segments[0], sats, TEST_LAT, TEST_LON, TEST_ALT)
+
+    assert seg.candidates, "no candidates found"
+    top = seg.candidates[0]
+    assert top.norad == target.norad, (
+        f"expected {target.name}, got {top.name} "
+        f"(eps {top.eps_deg:.2f}, target eps "
+        f"{[c.eps_deg for c in seg.candidates if c.norad == target.norad]})")
+    assert top.eps_deg < 2.0, top.eps_deg  # pixel quantization noise only
+
+
+def test_locate_recovers_position():
+    from locate import locate as run_locate
+    sats = _load_test_sats()
+    if sats is None:
+        return
+    t0 = datetime.now(timezone.utc)
+
+    segments = []
+    seen = set()
+    slot = 0
+    while len(segments) < 3 and slot < 40:  # distinct sats across fake slots
+        t = t0 + timedelta(seconds=45 * slot)
+        slot += 1
+        target = _pick_visible_sat(sats, t, exclude=seen)
+        if target is None:
+            continue
+        seen.add(target.norad)
+        points = extract_trail(_render_track(target, t))
+        annotate_azel(points, FRAME_UT, GEOM, STATE)
+        segments.extend(s for s in segment_trail(points) if len(s.points) >= 3)
+    assert len(segments) >= 3, len(segments)
+
+    lat, lon, residual, _ = run_locate(
+        segments, sats, seed=(TEST_LAT + 1.3, TEST_LON - 1.1))
+    assert abs(lat - TEST_LAT) < 0.3, (lat, TEST_LAT)
+    assert abs(lon - TEST_LON) < 0.6, (lon, TEST_LON)
+    assert residual < 2.0, residual
+
+
+def test_segmentation_splits_jumps():
+    pts_a = [(10.0 + k, 60.0 + k) for k in range(5)]
+    pts_b = [(80.0 + k, 30.0 + k) for k in range(5)]
+    samples = []
+    lit = np.zeros((GEOM.n_rows, GEOM.n_cols), dtype=bool)
+    t = 1000.0
+    for x, y in pts_a + pts_b:
+        lit = lit.copy()
+        lit[int(y), int(x)] = True
+        samples.append(FakeSample(t, lit))
+        t += 1.0
+    points = extract_trail(samples)
+    segments = segment_trail(points)
+    assert len(segments) == 2, [len(s.points) for s in segments]
+
+
+def test_boresight_model_roundtrip_and_anchors():
+    from geometry import azel_to_pixel_bs, pixel_to_azel_bs
+    el_b, az_b = 90.0 - TILT, BS_AZ % 360.0
+    for roll in (0.0, -12.5, 30.0):
+        # round trip
+        for el in (15.0, 40.0, 70.0):
+            for az in (10.0, 150.0, 300.0):
+                x, y = azel_to_pixel_bs(el, az, GEOM, el_b, az_b, roll)
+                el2, az2 = pixel_to_azel_bs(x, y, GEOM, el_b, az_b, roll)
+                assert angular_separation_deg(el, az, el2, az2) < 1e-5
+        # center pixel is the boresight regardless of roll
+        el2, az2 = pixel_to_azel_bs(GEOM.center, GEOM.center, GEOM, el_b, az_b, roll)
+        assert angular_separation_deg(el2, az2, el_b, az_b) < 1e-6
+    # zero roll: zenith sits tilt/deg_per_px straight up-image from center
+    x, y = azel_to_pixel_bs(90.0, 0.0, GEOM, el_b, az_b, 0.0)
+    assert abs(x - GEOM.center) < 1e-6
+    assert abs(y - (GEOM.center - TILT / GEOM.deg_per_px)) < 1e-6
+    # near the axis the tilt-shift model and this model agree
+    for el, az in ((62.0, 295.0), (58.0, 310.0), (68.0, 285.0)):
+        xa, ya = azel_to_pixel(el, az, FRAME_UT, GEOM, TILT, BS_AZ)
+        xb, yb = azel_to_pixel_bs(el, az, GEOM, el_b, az_b, 0.0)
+        assert math.hypot(xa - xb, ya - yb) < 1.0, (el, az, xa, ya, xb, yb)
+
+
+def test_roll_from_quaternion_live_values():
+    # regression lock against the live dish reading of 2026-08-04 and the
+    # empirically fitted roll of ~23-24 deg (analyze_geometry.py)
+    q = (0.0135, -0.4294, 0.8736, -0.2287)
+    rho = roll_from_quaternion(q, 63.51, -60.45)
+    assert abs(rho - 23.0) < 1.5, rho
+
+
+def test_bearing_sanity():
+    # due-east motion along the horizon-ish: bearing ~90
+    b = bearing_deg(45.0, 100.0, 45.0, 110.0)
+    assert 80.0 < b < 100.0, b
+
+
+def main():
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            print(f"{name} ...")
+            try:
+                fn()
+                print("  ok")
+            except AssertionError as e:
+                failures += 1
+                print(f"  FAIL: {e}")
+            except Exception as e:
+                failures += 1
+                print(f"  ERROR: {type(e).__name__}: {e}")
+    print(f"\n{'FAILED' if failures else 'PASSED'} ({failures} failures)")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()
