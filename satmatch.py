@@ -157,6 +157,13 @@ def cmd_identify(args):
     sats, catalog, age = load_catalogue(args.catalog, args.tle_max_age,
                                         offline=args.offline)
     print(f"Catalogue: {len(sats)} satellites ({catalog}, {age:.1f} h old)")
+    by_norad = {s.norad: s for s in sats}
+    tle_loaded = time.time()
+
+    satcat = None
+    if args.satellite_info:
+        import satinfo
+        satcat = satinfo.load_satcat(offline=args.offline)
 
     dish = Dish(target=args.target)
     state = dish.get_state()
@@ -179,10 +186,19 @@ def cmd_identify(args):
 
     log_fh = open(args.log, "a") if args.log else None
     tally = {}   # name -> [wins, sum_eps, sum_p]
+    info_shown = set()
     slot_idx = 0
     try:
         while True:
             slot_idx += 1
+            # long --watch runs: pick up fresh TLEs between slots
+            if not args.offline and time.time() - tle_loaded > args.tle_max_age * 3600:
+                sats, catalog, age = load_catalogue(
+                    args.catalog, args.tle_max_age, offline=args.offline)
+                by_norad = {s.norad: s for s in sats}
+                tle_loaded = time.time()
+                print(f"(catalogue refreshed: {len(sats)} satellites, "
+                      f"{age:.1f} h old)")
             boundary = wait_for_slot_boundary()
             state = dish.get_state()
             samples = collect_slot(dish, boundary)
@@ -202,6 +218,13 @@ def cmd_identify(args):
                     t[1] += c.eps_deg
                     t[2] += c.likelihood
                     slot_confident = slot_confident or is_confident(c)
+                    if (satcat is not None and c.norad not in info_shown
+                            and c.norad in by_norad):
+                        info_shown.add(c.norad)
+                        import satinfo
+                        print("  " + satinfo.format_info(
+                            by_norad[c.norad], satcat.get(c.norad),
+                            True).replace("\n", "\n  "))
 
             if args.watch:
                 continue
@@ -227,38 +250,23 @@ def cmd_identify(args):
                                                key=lambda kv: -kv[1][0]):
             print(f"  {name:<17} won {wins} slot(s) · mean ε {s_eps / wins:.1f}° "
                   f"· mean p {s_p / wins:.2f}")
-        if args.satellite_info:
-            print()
-            print_satellite_info([s for s in sats if s.name in tally],
-                                 sats, args)
-
-
-def print_satellite_info(targets, all_sats, args):
-    """Info blocks (launch, age, orbit, status) for the given satellites."""
-    import satinfo
-    satcat = satinfo.load_satcat(offline=args.offline)
-    in_feed = {s.norad for s in all_sats}
-    for sat in targets:
-        print(satinfo.format_info(sat, satcat.get(sat.norad),
-                                  sat.norad in in_feed))
 
 
 def cmd_info(args):
     """Standalone lookup: satmatch.py info STARLINK-5539 55747 ..."""
+    import satinfo
     sats, _, _ = load_catalogue(args.catalog, args.tle_max_age,
                                 include_dtc=True, offline=args.offline)
     by_name = {s.name.replace(" [DTC]", ""): s for s in sats}
     by_norad = {s.norad: s for s in sats}
-    targets = []
+    satcat = satinfo.load_satcat(offline=args.offline)
     for query in args.satellites:
         sat = (by_norad.get(int(query)) if query.isdigit()
                else by_name.get(query.upper()))
         if sat is None:
             print(f"{query}: not in the current catalogue")
         else:
-            targets.append(sat)
-    if targets:
-        print_satellite_info(targets, sats, args)
+            print(satinfo.format_info(sat, satcat.get(sat.norad), True))
 
 
 def cmd_fov(args):
@@ -393,8 +401,8 @@ def main():
     pi.add_argument("--log", default=None, metavar="FILE.jsonl",
                     help="append per-slot results as JSON lines")
     pi.add_argument("--satellite-info", action="store_true",
-                    help="after the summary, show launch/age/orbit/status "
-                         "for each identified satellite (SATCAT)")
+                    help="as each new satellite is identified, show its "
+                         "launch/age/orbit/status (SATCAT)")
     pi.set_defaults(func=cmd_identify)
 
     pn = sub.add_parser("info", help="show launch/age/orbit/status for "
