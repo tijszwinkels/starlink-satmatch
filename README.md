@@ -1,66 +1,167 @@
-# satmatch — which Starlink satellite is my dish paired to?
+# starlink-satmatch
 
-The dish never reports its serving satellite, but its obstruction map records
-which sky directions the phased array actually used. At each 15 s scheduling
-slot boundary (:12/:27/:42/:57 UTC) this tool resets the map, samples it at
-2 Hz, converts the newly-lit pixels to az/el, and matches the resulting sky
-track against SGP4 propagation of the full CelesTrak Starlink catalogue.
+**Which Starlink satellite is my dish talking to — right now?**
 
-Validated live on a Starlink Mini: per-slot IDs at 0.3–1.3° mean angular
-error with the runner-up 6–8° away (unambiguous). Method after
-arXiv:2601.13790 and Ahangarpour et al. (LEO-NET'24), with one significant
-correction: the FRAME_UT obstruction map is an azimuthal-equidistant
-projection about the **boresight axis in dish body coordinates** — image
-roll comes from `ned2dish_quaternion` (image-down = body −y). The published
-tilt-shift conversion is 6–10° wrong off-axis. See
-`../notes/reference/obstruction-map-geometry.md` for the derivation and
-`analyze_geometry.py` for the model-selection analysis.
+The dish never tells you. But its obstruction map records which sky
+directions the phased array actually used, and that's enough: reset the
+map at a scheduling-slot boundary, watch which pixels light up second by
+second, convert them to sky coordinates, and match the resulting track
+against orbital propagation of the full ~10,000-satellite catalogue.
+
+```
+▶ 2026-08-05 08:58:28 UTC — STARLINK-6069 (NORAD 56804) ε=0.6° · el 54° az 254° · 706 km
+■ 2026-08-05 08:59:12 UTC · ↓ 51.2 MB (9.1 Mbit/s) ↑ 12.6 MB (2.2 Mbit/s) · tracked 45 s · confirmed in 3/3 slot(s) · mean ε 0.5°
+  ∑ all-time with this satellite: 1 dwell · 3 slots · 45 s · ↓ 51.2 MB ↑ 12.6 MB
+
+▶ 2026-08-05 08:59:12 UTC — STARLINK-35177 (NORAD 65673) ε=0.5° · el 55° az 236° · 570 km
+■ 2026-08-05 08:59:25 UTC · ↓ 28.0 MB (16.4 Mbit/s) ↑ 4.5 MB (2.6 Mbit/s) · tracked 14 s · confirmed in 1/1 slot(s) · mean ε 0.5°
+  ∑ all-time with this satellite: 1 dwell · 1 slot · 14 s · ↓ 28.0 MB ↑ 4.5 MB
+```
+
+Identification runs at **0.3–1.3° mean angular error** with the runner-up
+candidate typically 6–8° away — in practice, unambiguous. You watch the
+constellation hand you between satellites every 15 seconds, see mid-slot
+beam switches when your link degrades, and learn how many megabytes each
+individual spacecraft carried for you.
+
+## Why this exists (and what's new here)
+
+Estimating the serving satellite from the obstruction map was pioneered by
+the University of Victoria group ([SatInView], [LEOViz], LEO-NET'24) and
+refined for mobility in [arXiv:2601.13790]. satmatch builds on their method
+and adds two things:
+
+1. **A corrected map projection.** The published pixel→direction conversion
+   treats `FRAME_UT` maps as a tilt-shifted zenith projection with zero
+   image roll. That's only valid near the boresight axis on a roll-free
+   mount. The map is actually an azimuthal-equidistant projection about the
+   **boresight axis in dish body coordinates**, with the image roll
+   recoverable from the status quaternion (image-down = body −y). On a
+   kickstand Starlink Mini sitting with 23° of roll, this took residuals
+   from 6–10° (off-axis tracks unmatchable) to **0.79° mean**. Derivation
+   and validation: [docs/geometry.md](docs/geometry.md).
+
+2. **GPS-less self-location.** Dish GPS is often policy-blocked ("allow
+   access on local network" off). `locate` grid-searches for the observer
+   position that makes the observed beam tracks consistent with the
+   catalogue — a few minutes of observation pins the dish to ~10–20 km.
+   The satellites tell you where you are.
+
+## Install
+
+```sh
+git clone https://github.com/tijszwinkels/starlink-satmatch
+cd starlink-satmatch
+python3 -m venv venv && venv/bin/pip install -r requirements.txt
+```
+
+You need LAN access to the dish (`192.168.100.1:9200`; in bypass mode,
+route the 192.168.100.0/24 subnet). Works with a plain consumer dish —
+developed against a Starlink Mini.
 
 ## Usage
 
-Uses the sibling `../starlink-grpc-tools` clone and `../venv`
-(`grpcio yagrc protobuf skyfield numpy`):
-
 ```sh
-../venv/bin/python satmatch.py identify              # observe until confident
-../venv/bin/python satmatch.py identify --watch      # continuous
-../venv/bin/python satmatch.py fov                   # read-only: who's near boresight
-../venv/bin/python satmatch.py locate                # recover dish position from tracks
-../venv/bin/python satmatch.py tle --refresh         # refresh catalogue cache
-../venv/bin/python satmatch.py identify --satellite-info   # + launch/age/orbit/status
-../venv/bin/python satmatch.py identify --dwells           # handover log: one block per dwell
-../venv/bin/python satmatch.py info STARLINK-5539 55297    # lookup by name or NORAD
+venv/bin/python satmatch.py identify                 # observe until confident
+venv/bin/python satmatch.py identify --dwells        # handover log (shown above)
+venv/bin/python satmatch.py identify --dwells --satellite-info   # + per-satellite details
+venv/bin/python satmatch.py identify --log-dwells    # + machine-readable dwells.jsonl
+venv/bin/python satmatch.py locate                   # recover dish position from tracks
+venv/bin/python satmatch.py fov                      # read-only: who's near the boresight
+venv/bin/python satmatch.py info STARLINK-5539       # catalogue lookup by name/NORAD
+venv/bin/python satmatch.py tle --refresh            # refresh the catalogue cache
 ```
 
-`--dwells` (implies `--watch`) prints only serving-satellite changes: a
-start timestamp when a new satellite is confidently identified, and an end
-timestamp with dwell duration, data moved (with average rates) and the
-persistent all-time tally for that satellite when it changes. Combine with
-`--satellite-info` to also get the full info block per new satellite. Slots
-without a confident ID neither open nor close a dwell; the close line's
-"confirmed in N/M slots" exposes any gaps.
+Observer location resolution order: `--location lat,lon[,alt_m]` → dish GPS
+(if enabled in the app) → saved `location.json` (written by
+`--save-location` or by `locate`). Matching needs the position to ~10 km.
 
-`--satellite-info` / `info` pull launch date+site, age, operational status
-and international designator from the CelesTrak SATCAT (cached 7 days) and
-the current orbit from the TLE itself. Starlink hardware version is not in
-any public catalogue, so it is inferred from launch date + orbital shell and
-labelled as a heuristic.
+`--satellite-info` adds launch date/site, age, hardware generation
+(heuristic — not published anywhere machine-readable), orbit from the
+current TLE, and operational status per identified satellite:
 
-Observer location: `--location lat,lon[,alt_m]` / dish GPS (if the app's
-"allow access on local network" is enabled) / `location.json` (written by
-`--save-location`, or by `locate`, which recovers the position from the
-tracks themselves to ~10 km when the dish GPS is policy-blocked).
-
-**Caveat:** `identify` and `locate` reset the dish's obstruction map every
-slot, discarding its learned obstruction history (re-learned in ~12 h).
-Don't leave `--watch` running on a link you depend on.
-
-## Tests
-
-```sh
-../venv/bin/python test_satmatch.py
+```
+STARLINK-5284 · NORAD 55297 · Intl 2023-010AE
+    type:     v1.5 (Gen1)  [heuristic from launch date]
+    launched: 2023-01-19 from Vandenberg SFB (Western Range) · age 3.5 years
+    status:   Operational (SATCAT '+') · in SpaceX ephemerides feed
+    orbit:    577 × 581 km · incl 70.0° · period 96.1 min  [TLE 0 d old]
 ```
 
-Includes a synthetic end-to-end (render a real satellite's track into fake
-maps, recover it from the full catalogue), propagation validated against
-skyfield to <0.25°, and location recovery.
+## How it works
+
+1. Starlink handovers happen on a globally synchronized 15 s grid
+   (:12/:27/:42/:57 UTC). At each boundary, clear the obstruction map.
+2. Sample the map at 2 Hz; pixels that turn on are where the beam pointed
+   during that second.
+3. Convert pixels to (el, az) with the boresight-frame projection
+   ([docs/geometry.md](docs/geometry.md)).
+4. Split the trail wherever it jumps — the dish re-targets mid-slot when
+   the link degrades, and unsegmented trails produce confidently wrong IDs.
+5. Match each segment against SGP4 propagation of the CelesTrak catalogue
+   (SpaceX's supplemental ephemerides by default; direct-to-cell birds
+   included — they carry the standard Ku/Ka payload too). The whole
+   catalogue propagates in one vectorized call.
+6. Score by mean angular separation plus a trajectory-direction term, and
+   report ranked candidates with likelihoods. Ambiguous slots trigger
+   further observation automatically.
+
+Per-dwell data volumes come from the dish's 1 Hz throughput history,
+integrated over slot-aligned dwell windows. The dish only counts space-link
+traffic (verified: hammering its API at 12 Mbit/s moves the counters not at
+all), so the tool's own polling — ~120 kB/s, LAN-only — never contaminates
+the numbers. Everything the tool learns about your link stays on your
+machine; the only internet access is downloading public catalogues.
+
+## Files it writes
+
+| file | what | when |
+|---|---|---|
+| `tle_cache/` | CelesTrak GP data + SATCAT | TLEs ≤12 h old, SATCAT ≤7 d |
+| `location.json` | observer position | `--save-location` / `locate` |
+| `sat_history.json` | lifetime per-satellite tally (dwells, slots, time, bytes) | each dwell close |
+| `dwells.jsonl` | append-only machine-readable dwell records | `--log-dwells` |
+
+## Caveats
+
+- **`identify` and `locate` reset the dish's obstruction map every 15 s.**
+  The dish uses that map's history to plan around obstructions; it re-learns
+  in ~12 h, but don't leave `--watch` running permanently on a link you
+  depend on, and expect the app's obstruction display to look empty while
+  the tool runs.
+- Idle links get sparse beam grants; slots with fewer than 3 lit pixels
+  yield no ID (reported honestly rather than guessed).
+- `FRAME_EARTH` maps (some service plans) use the reference projection and
+  are untested here — reports welcome.
+- Hardware version in `--satellite-info` is inferred from launch date +
+  orbital shell; SpaceX doesn't publish it.
+
+## Accuracy
+
+Validated live against a Starlink Mini at 62°N: per-slot ε 0.3–1.3°
+(runner-up 6–8° away); synthetic end-to-end tests recover a known
+satellite's rendered track from the full catalogue at <2°; the fast
+propagation path agrees with Skyfield to <0.25°; `locate` recovered the
+dish position to ~20 km (0.9° residual). Run the suite:
+
+```sh
+venv/bin/python test_satmatch.py
+```
+
+## Credits & prior art
+
+- [starlink-grpc-tools][sgt] (sparky8512) — the dish gRPC layer this builds on.
+- [SatInView] (Ahangarpour et al., LEO-NET'24) and [LEOViz] (Zhao) — the
+  original obstruction-map serving-satellite identification method.
+- [arXiv:2601.13790] — frame semantics, slot grid, dynamic beam switching.
+- [CelesTrak] — GP element sets and the SATCAT.
+
+[sgt]: https://github.com/sparky8512/starlink-grpc-tools
+[SatInView]: https://github.com/aliahan/SatInView
+[LEOViz]: https://github.com/clarkzjw/LEOViz
+[arXiv:2601.13790]: https://arxiv.org/abs/2601.13790
+[CelesTrak]: https://celestrak.org/
+
+## License
+
+MIT — see [LICENSE](LICENSE).
