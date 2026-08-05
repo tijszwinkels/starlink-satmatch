@@ -196,7 +196,9 @@ class DwellLog:
                 if self.cur is not None:
                     mid = (self.cur["last_seen"] + seg.t_start) / 2.0
                     if slot_index(self.cur["last_seen"]) == slot_index(seg.t_start):
-                        cut = mid            # intra-slot beam switch
+                        cut = mid            # intra-slot beam switch: the old
+                        self.cur["elapsed"] += 1  # dwell was active this slot,
+                        # which the end-of-pass tick won't count for it
                     else:
                         cut = nearest_slot_boundary(mid)
                     self.close(end_t=cut)

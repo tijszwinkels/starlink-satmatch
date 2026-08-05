@@ -341,6 +341,8 @@ def test_dwell_log_intra_slot_switch_keeps_midpoint():
     a_close = out.getvalue().splitlines()[1]
     # cut stays at the 994.0 midpoint: window [987, 994] -> 7 s
     assert "tracked 7 s" in a_close, a_close
+    # the same-pass close must still count this slot as elapsed (not 1/0)
+    assert "confirmed in 1/1 slot(s)" in a_close, a_close
 
 
 def test_dwell_log_transfer_integration():
