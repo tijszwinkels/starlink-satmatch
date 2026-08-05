@@ -89,6 +89,21 @@ class Dish:
         starlink_grpc.reset_obstruction_map(self.ctx)
         logger.info("Obstruction map reset")
 
+    def get_history_throughput(self, seconds):
+        """Last `seconds` of 1 Hz throughput history, oldest first.
+
+        Returns (timestamps, down_bps, up_bps); timestamps are unix seconds
+        assigned by counting back from now (the ring's newest sample is the
+        current second, so alignment error is ~1 s).
+        """
+        _, bulk = starlink_grpc.history_bulk_data(int(seconds), context=self.ctx)
+        now = time.time()
+        down = [v or 0.0 for v in bulk["downlink_throughput_bps"]]
+        up = [v or 0.0 for v in bulk["uplink_throughput_bps"]]
+        n = len(down)
+        ts = [now - (n - 1 - i) for i in range(n)]
+        return ts, down, up
+
     def try_get_location(self):
         """Return (lat, lon, alt_m) or None if disabled by policy."""
         try:

@@ -268,9 +268,44 @@ def test_dwell_log_sequencing():
     assert text.count("■") == 2, text
     assert text.index("STARLINK-A") < text.index("STARLINK-B")
     a_close = text.splitlines()[1]
-    assert "tracked 28 s" in a_close, a_close          # 1000.0 -> 1028.0
+    # window cut midway between A's last evidence (1028) and B's first (1060)
+    assert "tracked 44 s" in a_close, a_close
     assert "confirmed in 2/4 slot(s)" in a_close, a_close
     assert "\n\n" in text                              # blank line between dwells
+
+
+def test_dwell_log_transfer_integration():
+    import contextlib
+    import io
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    t0 = 2000.0
+
+    class StubDish:
+        def get_history_throughput(self, seconds):
+            n = 60
+            ts = [t0 - 10 + i for i in range(n)]
+            return ts, [8e6] * n, [8e5] * n   # 1 MB/s down, 100 kB/s up
+
+    def seg(norad, name, ts):
+        s = Segment(points=[type("P", (), {"t": ts})(),
+                            type("P", (), {"t": ts + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    log = DwellLog(satcat={}, by_norad={}, dish=StubDish())
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        log.observe([seg(111, "STARLINK-A", t0)])
+        log.observe([seg(222, "STARLINK-B", t0 + 30.0)])
+    a_close = out.getvalue().splitlines()[1]
+    # window [t0, t0+21.5] -> 22 one-second samples at 1 MB/s / 100 kB/s
+    assert "↓ 22.0 MB" in a_close, a_close
+    assert "↑ 2.2 MB" in a_close, a_close
+    assert a_close.index("↓") < a_close.index("UTC"), a_close  # before timestamp
 
 
 def test_segmentation_splits_jumps():

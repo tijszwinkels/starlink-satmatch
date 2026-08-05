@@ -111,6 +111,13 @@ def collect_slot(dish, boundary, hz=2.0):
     return samples
 
 
+def fmt_bytes(n):
+    for div, unit in ((1e9, "GB"), (1e6, "MB"), (1e3, "kB")):
+        if n >= div:
+            return f"{n / div:.1f} {unit}"
+    return f"{n:.0f} B"
+
+
 class DwellLog:
     """--dwells mode: print only serving-satellite changes.
 
@@ -119,11 +126,19 @@ class DwellLog:
     with no confident ID neither open nor close anything — on a sparse/idle
     link the same satellite usually continues — but the close line reports
     confirmed/elapsed slots so silent gaps stay visible.
+
+    Data transferred per dwell is integrated from the dish's 1 Hz history
+    ring over the dwell window. Windows are contiguous: each dwell ends and
+    the next begins at the cut point midway between the last evidence of the
+    old satellite and the first evidence of the new one — which lands on the
+    slot boundary for a normal handover, and mid-slot for an intra-slot
+    beam switch.
     """
 
-    def __init__(self, satcat, by_norad):
+    def __init__(self, satcat, by_norad, dish=None):
         self.satcat = satcat
         self.by_norad = by_norad   # reassigned on mid-run TLE refresh
+        self.dish = dish
         self.cur = None
 
     @staticmethod
@@ -143,9 +158,13 @@ class DwellLog:
                 self.cur["confirmed"] += 1
                 self.cur["eps_sum"] += c.eps_deg
             else:
-                self.close()
+                cut = None
+                if self.cur is not None:
+                    cut = (self.cur["last_seen"] + seg.t_start) / 2.0
+                    self.close(end_t=cut)
                 self.cur = {"norad": c.norad, "name": c.name,
                             "start": seg.t_start, "last_seen": seg.t_end,
+                            "win_start": cut if cut is not None else seg.t_start,
                             "confirmed": 1, "elapsed": 0,
                             "eps_sum": c.eps_deg}
                 self._print_open(c)
@@ -163,13 +182,32 @@ class DwellLog:
             print("  " + satinfo.format_info(
                 sat, self.satcat.get(sat.norad), True).replace("\n", "\n  "))
 
-    def close(self):
+    def _transfer(self, win_start, end_t):
+        """'↓ x ↑ y · ' for the window, or '' when history is unavailable."""
+        if self.dish is None:
+            return ""
+        try:
+            need = time.time() - win_start + 5.0
+            ts, down, up = self.dish.get_history_throughput(need)
+        except Exception as e:
+            logger.warning("throughput history unavailable: %s", e)
+            return ""
+        dn = sum(b for t, b in zip(ts, down) if win_start <= t <= end_t) / 8.0
+        ub = sum(b for t, b in zip(ts, up) if win_start <= t <= end_t) / 8.0
+        # ring didn't reach back to the window start -> lower bound
+        approx = "≥" if ts and ts[0] > win_start + 1.5 else ""
+        return f"↓ {approx}{fmt_bytes(dn)} ↑ {approx}{fmt_bytes(ub)} · "
+
+    def close(self, end_t=None):
         if self.cur is None:
             return
         d = self.cur
         self.cur = None
-        dur = d["last_seen"] - d["start"]
-        print(f"■ {self._stamp(d['last_seen'])} UTC — tracked {dur:.0f} s · "
+        if end_t is None:
+            end_t = d["last_seen"]
+        dur = end_t - d["win_start"]
+        print(f"■ {self._transfer(d['win_start'], end_t)}"
+              f"{self._stamp(end_t)} UTC — tracked {dur:.0f} s · "
               f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
               f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
         print()
@@ -231,11 +269,13 @@ def cmd_identify(args):
 
     dwell_log = None
     if args.dwells:
-        dwell_log = DwellLog(satcat, by_norad)
+        dwell_log = DwellLog(satcat, by_norad, dish=None)  # dish set below
         if not args.slots:
             args.watch = True
 
     dish = Dish(target=args.target)
+    if dwell_log is not None:
+        dwell_log.dish = dish
     state = dish.get_state()
     print(f"Dish: {state.hardware} · {state.state} · "
           f"boresight az {state.boresight_az_deg:.1f}° el {state.boresight_el_deg:.1f}° "
