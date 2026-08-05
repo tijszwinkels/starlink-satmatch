@@ -280,10 +280,35 @@ def test_dwell_log_sequencing():
     assert text.count("■") == 2, text
     assert text.index("STARLINK-A") < text.index("STARLINK-B")
     a_close = text.splitlines()[1]
-    # window cut midway between A's last evidence (1028) and B's first (1060)
-    assert "tracked 44 s" in a_close, a_close
+    # window [987 (slot start), 1047 (boundary nearest the 1028/1060 mid)]
+    assert "tracked 60 s" in a_close, a_close
     assert "confirmed in 2/4 slot(s)" in a_close, a_close
     assert "\n\n" in text                              # blank line between dwells
+
+
+def test_dwell_log_intra_slot_switch_keeps_midpoint():
+    import contextlib
+    import io
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, name, t0, t1):
+        s = Segment(points=[type("P", (), {"t": t0})(),
+                            type("P", (), {"t": t1})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    log = DwellLog(satcat=None, by_norad={})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        # both satellites seen inside the same slot [987, 1002)
+        log.observe([seg(111, "STARLINK-A", 988.0, 992.0),
+                     seg(222, "STARLINK-B", 996.0, 999.0)])
+    a_close = out.getvalue().splitlines()[1]
+    # cut stays at the 994.0 midpoint: window [987, 994] -> 7 s
+    assert "tracked 7 s" in a_close, a_close
 
 
 def test_dwell_log_transfer_integration():
@@ -314,13 +339,14 @@ def test_dwell_log_transfer_integration():
         log.observe([seg(111, "STARLINK-A", t0)])
         log.observe([seg(222, "STARLINK-B", t0 + 30.0)])
     a_close = out.getvalue().splitlines()[1]
-    # window [t0, t0+21.5] -> 22 one-second samples at 1 MB/s / 100 kB/s
-    assert "↓ 22.0 MB" in a_close, a_close
-    assert "↑ 2.2 MB" in a_close, a_close
+    # window [1992 (slot start before 2000), 2022 (snapped cut)]:
+    # 31 one-second samples at 1 MB/s / 100 kB/s
+    assert "↓ 31.0 MB" in a_close, a_close
+    assert "↑ 3.1 MB" in a_close, a_close
     assert a_close.index("UTC") < a_close.index("↓"), a_close  # timestamp first
-    # average rates over the 21.5 s window
-    assert "(8.2 Mbit/s)" in a_close, a_close
-    assert "(818.6 kbit/s)" in a_close, a_close
+    # average rates over the 30 s window
+    assert "(8.3 Mbit/s)" in a_close, a_close
+    assert "(826.7 kbit/s)" in a_close, a_close
 
 
 def test_sat_history_persistence(tmpdir="/tmp/satmatch-test-history.json"):
@@ -379,8 +405,8 @@ def test_dwell_log_history_line(tmppath="/tmp/satmatch-test-history2.json"):
     assert "1 dwell ·" in sums[0] and "STARLINK" not in sums[0], sums[0]
     assert "1 dwell ·" in sums[1], sums[1]
     assert "2 dwells ·" in sums[2], sums[2]   # A's second dwell
-    # A's windows: [1000, 1021.5] + [1051.5, 1073] -> 43 s total
-    assert "· 43 s ·" in sums[2], sums[2]
+    # A's slot-aligned windows: [987, 1017] + [1047, 1077] -> 60 s total
+    assert "· 1 m 00 s ·" in sums[2], sums[2]
     os.remove(tmppath)
 
 

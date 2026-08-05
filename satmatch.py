@@ -81,6 +81,19 @@ def resolve_location(args, dish):
     return loc
 
 
+def slot_boundary_before(t):
+    """The :12/:27/:42/:57 UTC boundary at or before unix time t."""
+    return t - ((t - SLOT_OFFSET) % SLOT_PERIOD)
+
+
+def nearest_slot_boundary(t):
+    return SLOT_OFFSET + SLOT_PERIOD * round((t - SLOT_OFFSET) / SLOT_PERIOD)
+
+
+def slot_index(t):
+    return int((t - SLOT_OFFSET) // SLOT_PERIOD)
+
+
 def wait_for_slot_boundary():
     """Sleep until just after the next :12/:27/:42/:57 UTC boundary.
     Returns the boundary's unix time."""
@@ -144,11 +157,14 @@ class DwellLog:
     confirmed/elapsed slots so silent gaps stay visible.
 
     Data transferred per dwell is integrated from the dish's 1 Hz history
-    ring over the dwell window. Windows are contiguous: each dwell ends and
-    the next begins at the cut point midway between the last evidence of the
-    old satellite and the first evidence of the new one — which lands on the
-    slot boundary for a normal handover, and mid-slot for an intra-slot
-    beam switch.
+    ring over the dwell window. Windows are contiguous and slot-aligned:
+    a dwell starts at the boundary of its first confirmed slot, and a
+    handover cut snaps to the slot boundary nearest the midpoint between
+    the last evidence of the old satellite and the first evidence of the
+    new one — handovers happen on the 15 s grid. The exception is when both
+    satellites were seen within the *same* slot (a demonstrable intra-slot
+    beam switch): there the midpoint itself is kept. At exit the open dwell
+    closes at the end of its last confirmed slot (or now, if earlier).
     """
 
     def __init__(self, satcat, by_norad, dish=None, history=None):
@@ -177,11 +193,16 @@ class DwellLog:
             else:
                 cut = None
                 if self.cur is not None:
-                    cut = (self.cur["last_seen"] + seg.t_start) / 2.0
+                    mid = (self.cur["last_seen"] + seg.t_start) / 2.0
+                    if slot_index(self.cur["last_seen"]) == slot_index(seg.t_start):
+                        cut = mid            # intra-slot beam switch
+                    else:
+                        cut = nearest_slot_boundary(mid)
                     self.close(end_t=cut)
                 self.cur = {"norad": c.norad, "name": c.name,
                             "start": seg.t_start, "last_seen": seg.t_end,
-                            "win_start": cut if cut is not None else seg.t_start,
+                            "win_start": (cut if cut is not None
+                                          else slot_boundary_before(seg.t_start)),
                             "confirmed": 1, "elapsed": 0,
                             "eps_sum": c.eps_deg}
                 self._print_open(c)
@@ -221,7 +242,9 @@ class DwellLog:
         d = self.cur
         self.cur = None
         if end_t is None:
-            end_t = d["last_seen"]
+            # exit: the pairing held through the last confirmed slot
+            end_t = min(slot_boundary_before(d["last_seen"]) + SLOT_PERIOD,
+                        time.time())
         dur = max(end_t - d["win_start"], 1.0)
         xfer = self._measure_transfer(d["win_start"], end_t)
         lead = ""
