@@ -26,7 +26,9 @@ from propagation import altaz_from_ecef, angsep_np, batch_ecef
 from tle import load_catalogue
 
 GEOM = MapGeometry()
-SEED = (61.70, 5.27)  # model-A locate result; true position is nearby
+# Coarse search seed near the observer; refine with your own position or a
+# `locate` result before re-running the analysis.
+SEED = (62.0, 7.0)
 
 
 def load_slots(paths):
