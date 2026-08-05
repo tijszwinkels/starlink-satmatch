@@ -203,6 +203,42 @@ def test_locate_recovers_position():
     assert residual < 2.0, residual
 
 
+def test_satinfo_version_heuristic():
+    from satinfo import starlink_version
+    assert starlink_version("2019-05-24").startswith("v0.9")
+    assert starlink_version("2020-01-07").startswith("v1.0")
+    assert starlink_version("2021-06-01").startswith("v1.5")
+    assert starlink_version("2023-02-27").startswith("V2 Mini")
+    assert starlink_version("2025-12-01").startswith("V2 Mini")
+    # Gen1 70/97.6 deg shells kept getting v1.5 after the V2 Mini debut
+    assert starlink_version("2023-03-03", incl_deg=70.0).startswith("v1.5")
+    assert starlink_version("2023-03-03", incl_deg=53.2).startswith("V2 Mini")
+    assert starlink_version("2026-01-22", incl_deg=97.3).startswith("V2 Mini")
+    assert "direct-to-cell" in starlink_version("2024-01-02", "STARLINK-11072 [DTC]")
+    assert starlink_version("") == "unknown"
+
+
+def test_satinfo_live_entry():
+    import satinfo
+    if not satinfo.SATCAT_PATH.exists():
+        print("  SKIP (no cached satcat.csv)")
+        return
+    sats = _load_test_sats()
+    if sats is None:
+        return
+    satcat = satinfo.load_satcat(offline=True)
+    sat = next(s for s in sats if s.name == "STARLINK-5539")
+    entry = satcat[sat.norad]
+    assert entry.launch_date == "2023-03-03", entry
+    assert entry.ops_status_code == "+", entry
+    peri, apo, incl, period = satinfo.orbit_from_satrec(sat.satrec)
+    assert 60.0 < incl < 80.0, incl        # 70 deg shell
+    assert 450.0 < peri <= apo < 700.0, (peri, apo)
+    assert 90.0 < period < 100.0, period
+    text = satinfo.format_info(sat, entry, True)
+    assert "v1.5" in text and "Operational" in text and "70.0°" in text, text
+
+
 def test_segmentation_splits_jumps():
     pts_a = [(10.0 + k, 60.0 + k) for k in range(5)]
     pts_b = [(80.0 + k, 30.0 + k) for k in range(5)]

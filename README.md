@@ -27,7 +27,15 @@ Uses the sibling `../starlink-grpc-tools` clone and `../venv`
 ../venv/bin/python satmatch.py fov                   # read-only: who's near boresight
 ../venv/bin/python satmatch.py locate                # recover dish position from tracks
 ../venv/bin/python satmatch.py tle --refresh         # refresh catalogue cache
+../venv/bin/python satmatch.py identify --satellite-info   # + launch/age/orbit/status
+../venv/bin/python satmatch.py info STARLINK-5539 55297    # lookup by name or NORAD
 ```
+
+`--satellite-info` / `info` pull launch date+site, age, operational status
+and international designator from the CelesTrak SATCAT (cached 7 days) and
+the current orbit from the TLE itself. Starlink hardware version is not in
+any public catalogue, so it is inferred from launch date + orbital shell and
+labelled as a heuristic.
 
 Observer location: `--location lat,lon[,alt_m]` / dish GPS (if the app's
 "allow access on local network" is enabled) / `location.json` (written by

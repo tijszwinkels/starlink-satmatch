@@ -227,6 +227,38 @@ def cmd_identify(args):
                                                key=lambda kv: -kv[1][0]):
             print(f"  {name:<17} won {wins} slot(s) · mean ε {s_eps / wins:.1f}° "
                   f"· mean p {s_p / wins:.2f}")
+        if args.satellite_info:
+            print()
+            print_satellite_info([s for s in sats if s.name in tally],
+                                 sats, args)
+
+
+def print_satellite_info(targets, all_sats, args):
+    """Info blocks (launch, age, orbit, status) for the given satellites."""
+    import satinfo
+    satcat = satinfo.load_satcat(offline=args.offline)
+    in_feed = {s.norad for s in all_sats}
+    for sat in targets:
+        print(satinfo.format_info(sat, satcat.get(sat.norad),
+                                  sat.norad in in_feed))
+
+
+def cmd_info(args):
+    """Standalone lookup: satmatch.py info STARLINK-5539 55747 ..."""
+    sats, _, _ = load_catalogue(args.catalog, args.tle_max_age,
+                                include_dtc=True, offline=args.offline)
+    by_name = {s.name.replace(" [DTC]", ""): s for s in sats}
+    by_norad = {s.norad: s for s in sats}
+    targets = []
+    for query in args.satellites:
+        sat = (by_norad.get(int(query)) if query.isdigit()
+               else by_name.get(query.upper()))
+        if sat is None:
+            print(f"{query}: not in the current catalogue")
+        else:
+            targets.append(sat)
+    if targets:
+        print_satellite_info(targets, sats, args)
 
 
 def cmd_fov(args):
@@ -360,7 +392,15 @@ def main():
                     help="keep observing until interrupted")
     pi.add_argument("--log", default=None, metavar="FILE.jsonl",
                     help="append per-slot results as JSON lines")
+    pi.add_argument("--satellite-info", action="store_true",
+                    help="after the summary, show launch/age/orbit/status "
+                         "for each identified satellite (SATCAT)")
     pi.set_defaults(func=cmd_identify)
+
+    pn = sub.add_parser("info", help="show launch/age/orbit/status for "
+                                     "satellites by name or NORAD id")
+    pn.add_argument("satellites", nargs="+", metavar="NAME_OR_NORAD")
+    pn.set_defaults(func=cmd_info)
 
     pf = sub.add_parser("fov", help="list satellites currently near the dish FOV "
                                     "(read-only, no map reset)")
