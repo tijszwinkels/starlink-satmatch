@@ -28,8 +28,15 @@ Uses the sibling `../starlink-grpc-tools` clone and `../venv`
 ../venv/bin/python satmatch.py locate                # recover dish position from tracks
 ../venv/bin/python satmatch.py tle --refresh         # refresh catalogue cache
 ../venv/bin/python satmatch.py identify --satellite-info   # + launch/age/orbit/status
+../venv/bin/python satmatch.py identify --dwells           # handover log: one block per dwell
 ../venv/bin/python satmatch.py info STARLINK-5539 55297    # lookup by name or NORAD
 ```
+
+`--dwells` (implies `--watch`) prints only serving-satellite changes: a
+start timestamp + satellite info when a new bird is confidently identified,
+and an end timestamp with dwell duration when it changes. Slots without a
+confident ID neither open nor close a dwell; the close line's
+"confirmed in N/M slots" exposes any gaps.
 
 `--satellite-info` / `info` pull launch date+site, age, operational status
 and international designator from the CelesTrak SATCAT (cached 7 days) and

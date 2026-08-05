@@ -239,6 +239,40 @@ def test_satinfo_live_entry():
     assert "v1.5" in text and "Operational" in text and "70.0°" in text, text
 
 
+def test_dwell_log_sequencing():
+    import contextlib
+    import io
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, name, t0, eps=1.0, p=1.0):
+        s = Segment(points=[type("P", (), {"t": t0})(),
+                            type("P", (), {"t": t0 + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=eps,
+                                  bearing_diff_deg=0.0, likelihood=p,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    log = DwellLog(satcat={}, by_norad={})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        log.observe([seg(111, "STARLINK-A", 1000.0)])   # opens A
+        log.observe([seg(111, "STARLINK-A", 1015.0)])   # continues A
+        log.observe([Segment(points=[])])               # no ID: no change
+        weak = seg(222, "STARLINK-B", 1045.0, eps=8.0, p=1.0)
+        log.observe([weak])                             # weak: must not switch
+        log.observe([seg(222, "STARLINK-B", 1060.0)])   # confident B: switch
+        log.close()
+    text = out.getvalue()
+    assert text.count("▶") == 2, text
+    assert text.count("■") == 2, text
+    assert text.index("STARLINK-A") < text.index("STARLINK-B")
+    a_close = text.splitlines()[1]
+    assert "tracked 28 s" in a_close, a_close          # 1000.0 -> 1028.0
+    assert "confirmed in 2/4 slot(s)" in a_close, a_close
+    assert "\n\n" in text                              # blank line between dwells
+
+
 def test_segmentation_splits_jumps():
     pts_a = [(10.0 + k, 60.0 + k) for k in range(5)]
     pts_b = [(80.0 + k, 30.0 + k) for k in range(5)]

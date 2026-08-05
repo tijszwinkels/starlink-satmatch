@@ -111,6 +111,70 @@ def collect_slot(dish, boundary, hz=2.0):
     return samples
 
 
+class DwellLog:
+    """--dwells mode: print only serving-satellite changes.
+
+    A dwell opens when a satellite is confidently identified and closes when
+    a *different* satellite is confidently identified (or at exit). Slots
+    with no confident ID neither open nor close anything — on a sparse/idle
+    link the same satellite usually continues — but the close line reports
+    confirmed/elapsed slots so silent gaps stay visible.
+    """
+
+    def __init__(self, satcat, by_norad):
+        self.satcat = satcat
+        self.by_norad = by_norad   # reassigned on mid-run TLE refresh
+        self.cur = None
+
+    @staticmethod
+    def _stamp(t):
+        return datetime.fromtimestamp(t, tz=timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S")
+
+    def observe(self, segments):
+        for seg in segments:
+            if not seg.candidates:
+                continue
+            c = seg.candidates[0]
+            if not is_confident(c):
+                continue
+            if self.cur and c.norad == self.cur["norad"]:
+                self.cur["last_seen"] = seg.t_end
+                self.cur["confirmed"] += 1
+                self.cur["eps_sum"] += c.eps_deg
+            else:
+                self.close()
+                self.cur = {"norad": c.norad, "name": c.name,
+                            "start": seg.t_start, "last_seen": seg.t_end,
+                            "confirmed": 1, "elapsed": 0,
+                            "eps_sum": c.eps_deg}
+                self._print_open(c)
+        if self.cur is not None:
+            self.cur["elapsed"] += 1
+
+    def _print_open(self, c):
+        print(f"▶ {self._stamp(self.cur['start'])} UTC — "
+              f"{self.cur['name']} (NORAD {self.cur['norad']}) "
+              f"ε={c.eps_deg:.1f}° · el {c.el_deg:.0f}° az {c.az_deg:.0f}° "
+              f"· {c.range_km:.0f} km")
+        sat = self.by_norad.get(self.cur["norad"])
+        if sat is not None:
+            import satinfo
+            print("  " + satinfo.format_info(
+                sat, self.satcat.get(sat.norad), True).replace("\n", "\n  "))
+
+    def close(self):
+        if self.cur is None:
+            return
+        d = self.cur
+        self.cur = None
+        dur = d["last_seen"] - d["start"]
+        print(f"■ {self._stamp(d['last_seen'])} UTC — tracked {dur:.0f} s · "
+              f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
+              f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
+        print()
+
+
 def print_slot_result(slot_idx, boundary, points, segments):
     stamp = datetime.fromtimestamp(boundary, tz=timezone.utc).strftime("%H:%M:%S")
     print(f"\n─ slot {slot_idx} @ {stamp} UTC · {len(points)} trail points · "
@@ -161,9 +225,15 @@ def cmd_identify(args):
     tle_loaded = time.time()
 
     satcat = None
-    if args.satellite_info:
+    if args.satellite_info or args.dwells:
         import satinfo
         satcat = satinfo.load_satcat(offline=args.offline)
+
+    dwell_log = None
+    if args.dwells:
+        dwell_log = DwellLog(satcat, by_norad)
+        if not args.slots:
+            args.watch = True
 
     dish = Dish(target=args.target)
     state = dish.get_state()
@@ -196,6 +266,8 @@ def cmd_identify(args):
                 sats, catalog, age = load_catalogue(
                     args.catalog, args.tle_max_age, offline=args.offline)
                 by_norad = {s.norad: s for s in sats}
+                if dwell_log is not None:
+                    dwell_log.by_norad = by_norad
                 tle_loaded = time.time()
                 print(f"(catalogue refreshed: {len(sats)} satellites, "
                       f"{age:.1f} h old)")
@@ -206,7 +278,10 @@ def cmd_identify(args):
             annotate_azel(points, frame, samples[0].geom, state)
             segments = [score_segment(s, sats, lat, lon, alt_m)
                         for s in segment_trail(points)]
-            print_slot_result(slot_idx, boundary, points, segments)
+            if dwell_log is not None:
+                dwell_log.observe(segments)
+            else:
+                print_slot_result(slot_idx, boundary, points, segments)
             log_slot(log_fh, boundary, state, points, segments)
 
             slot_confident = False
@@ -218,7 +293,8 @@ def cmd_identify(args):
                     t[1] += c.eps_deg
                     t[2] += c.likelihood
                     slot_confident = slot_confident or is_confident(c)
-                    if (satcat is not None and c.norad not in info_shown
+                    if (satcat is not None and dwell_log is None
+                            and c.norad not in info_shown
                             and c.norad in by_norad):
                         info_shown.add(c.norad)
                         import satinfo
@@ -238,8 +314,12 @@ def cmd_identify(args):
                       "(TLE staleness or near-collinear satellites?)")
                 break
     except KeyboardInterrupt:
+        if dwell_log is not None:
+            dwell_log.close()
         print("\nInterrupted.")
     finally:
+        if dwell_log is not None:
+            dwell_log.close()
         if log_fh:
             log_fh.close()
         dish.close()
@@ -403,6 +483,10 @@ def main():
     pi.add_argument("--satellite-info", action="store_true",
                     help="as each new satellite is identified, show its "
                          "launch/age/orbit/status (SATCAT)")
+    pi.add_argument("--dwells", action="store_true",
+                    help="print only serving-satellite changes: dwell start "
+                         "timestamp + satellite info, then the end timestamp "
+                         "when the satellite changes (implies --watch)")
     pi.set_defaults(func=cmd_identify)
 
     pn = sub.add_parser("info", help="show launch/age/orbit/status for "
