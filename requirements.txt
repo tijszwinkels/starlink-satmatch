@@ -1,0 +1,7 @@
+# Runtime
+starlink-grpc-core   # dish gRPC (sparky8512/starlink-grpc-tools core module)
+numpy
+sgp4                 # vectorized satellite propagation (SatrecArray)
+
+# Tests only (oracle for the fast propagation path)
+skyfield

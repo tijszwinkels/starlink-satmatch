@@ -1,7 +1,8 @@
 """Dish gRPC I/O for satellite matching.
 
-Thin wrappers over starlink_grpc (imported from the sibling
-starlink-grpc-tools clone) that return exactly what the matcher needs.
+Thin wrappers over starlink_grpc that return exactly what the matcher
+needs. starlink_grpc comes from the starlink-grpc-core PyPI package, or
+as a fallback from a sibling clone of sparky8512/starlink-grpc-tools.
 """
 
 import logging
@@ -12,8 +13,12 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "starlink-grpc-tools"))
-import starlink_grpc  # noqa: E402
+try:
+    import starlink_grpc  # pip install starlink-grpc-core
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent /
+                           "starlink-grpc-tools"))
+    import starlink_grpc
 
 from geometry import MapGeometry  # noqa: E402
 
