@@ -194,7 +194,7 @@ class DwellLog:
               f"ε={c.eps_deg:.1f}° · el {c.el_deg:.0f}° az {c.az_deg:.0f}° "
               f"· {c.range_km:.0f} km")
         sat = self.by_norad.get(self.cur["norad"])
-        if sat is not None:
+        if sat is not None and self.satcat is not None:  # --satellite-info
             import satinfo
             print("  " + satinfo.format_info(
                 sat, self.satcat.get(sat.norad), True).replace("\n", "\n  "))
@@ -230,7 +230,7 @@ class DwellLog:
             a = "≥" if approx else ""
             lead = (f"↓ {a}{fmt_bytes(dn)} ({fmt_rate(dn * 8.0 / dur)}) "
                     f"↑ {a}{fmt_bytes(ub)} ({fmt_rate(ub * 8.0 / dur)}) · ")
-        print(f"■ {self._stamp(end_t)} UTC — {lead}tracked {dur:.0f} s · "
+        print(f"■ {self._stamp(end_t)} UTC · {lead}tracked {dur:.0f} s · "
               f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
               f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
         if self.history is not None:
@@ -296,7 +296,7 @@ def cmd_identify(args):
     tle_loaded = time.time()
 
     satcat = None
-    if args.satellite_info or args.dwells:
+    if args.satellite_info:
         import satinfo
         satcat = satinfo.load_satcat(offline=args.offline)
 
@@ -559,9 +559,10 @@ def main():
                     help="as each new satellite is identified, show its "
                          "launch/age/orbit/status (SATCAT)")
     pi.add_argument("--dwells", action="store_true",
-                    help="print only serving-satellite changes: dwell start "
-                         "timestamp + satellite info, then the end timestamp "
-                         "when the satellite changes (implies --watch)")
+                    help="print only serving-satellite changes: one block per "
+                         "dwell with start/end timestamps, transfer and the "
+                         "all-time tally; combine with --satellite-info for "
+                         "a full info block per new satellite (implies --watch)")
     pi.set_defaults(func=cmd_identify)
 
     pn = sub.add_parser("info", help="show launch/age/orbit/status for "

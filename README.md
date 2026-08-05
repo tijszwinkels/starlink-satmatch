@@ -33,9 +33,11 @@ Uses the sibling `../starlink-grpc-tools` clone and `../venv`
 ```
 
 `--dwells` (implies `--watch`) prints only serving-satellite changes: a
-start timestamp + satellite info when a new bird is confidently identified,
-and an end timestamp with dwell duration when it changes. Slots without a
-confident ID neither open nor close a dwell; the close line's
+start timestamp when a new satellite is confidently identified, and an end
+timestamp with dwell duration, data moved (with average rates) and the
+persistent all-time tally for that satellite when it changes. Combine with
+`--satellite-info` to also get the full info block per new satellite. Slots
+without a confident ID neither open nor close a dwell; the close line's
 "confirmed in N/M slots" exposes any gaps.
 
 `--satellite-info` / `info` pull launch date+site, age, operational status
