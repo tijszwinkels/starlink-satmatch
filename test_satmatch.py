@@ -286,6 +286,38 @@ def test_dwell_log_sequencing():
     assert "\n\n" in text                              # blank line between dwells
 
 
+def test_dwell_log_jsonl_records():
+    import contextlib
+    import io
+    import json as jsonlib
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, name, ts):
+        s = Segment(points=[type("P", (), {"t": ts})(),
+                            type("P", (), {"t": ts + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    fh = io.StringIO()
+    log = DwellLog(satcat=None, by_norad={}, log_fh=fh)
+    with contextlib.redirect_stdout(io.StringIO()):
+        log.observe([seg(111, "STARLINK-A", 1000.0)])
+        log.observe([seg(222, "STARLINK-B", 1030.0)])
+        log.close()
+    recs = [jsonlib.loads(l) for l in fh.getvalue().splitlines()]
+    assert len(recs) == 2, recs
+    a, b = recs
+    assert a["norad"] == 111 and b["norad"] == 222
+    assert a["seconds"] == 30.0, a          # [987, 1017] slot-aligned
+    assert a["end"] == b["start"], (a, b)   # contiguous windows
+    assert a["slots_confirmed"] == 1 and a["mean_eps_deg"] == 1.0, a
+    assert a["down_bytes"] is None, a       # no dish attached
+    assert a["first_evidence"].startswith("1970-01-01T00:16:40"), a
+
+
 def test_dwell_log_intra_slot_switch_keeps_midpoint():
     import contextlib
     import io

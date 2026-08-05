@@ -167,11 +167,12 @@ class DwellLog:
     closes at the end of its last confirmed slot (or now, if earlier).
     """
 
-    def __init__(self, satcat, by_norad, dish=None, history=None):
+    def __init__(self, satcat, by_norad, dish=None, history=None, log_fh=None):
         self.satcat = satcat
         self.by_norad = by_norad   # reassigned on mid-run TLE refresh
         self.dish = dish
         self.history = history     # SatHistory, or None to skip the tally
+        self.log_fh = log_fh       # append-only JSONL, one record per dwell
         self.cur = None
 
     @staticmethod
@@ -256,6 +257,25 @@ class DwellLog:
         print(f"■ {self._stamp(end_t)} UTC · {lead}tracked {dur:.0f} s · "
               f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
               f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
+        if self.log_fh is not None:
+            def iso(t):
+                return datetime.fromtimestamp(t, tz=timezone.utc).isoformat(
+                    timespec="milliseconds")
+            dn, ub, approx = xfer if xfer is not None else (None, None, None)
+            self.log_fh.write(json.dumps({
+                "start": iso(d["win_start"]), "end": iso(end_t),
+                "seconds": round(dur, 1),
+                "name": d["name"], "norad": d["norad"],
+                "slots_confirmed": d["confirmed"],
+                "slots_elapsed": d["elapsed"],
+                "mean_eps_deg": round(d["eps_sum"] / d["confirmed"], 2),
+                "first_evidence": iso(d["start"]),
+                "last_evidence": iso(d["last_seen"]),
+                "down_bytes": round(dn) if dn is not None else None,
+                "up_bytes": round(ub) if ub is not None else None,
+                "transfer_lower_bound": approx,
+            }) + "\n")
+            self.log_fh.flush()
         if self.history is not None:
             dn, ub = (xfer[0], xfer[1]) if xfer is not None else (0.0, 0.0)
             e = self.history.record_dwell(
@@ -323,11 +343,16 @@ def cmd_identify(args):
         import satinfo
         satcat = satinfo.load_satcat(offline=args.offline)
 
+    if args.log_dwells:
+        args.dwells = True
     dwell_log = None
+    dwell_fh = None
     if args.dwells:
         from history import SatHistory
+        if args.log_dwells:
+            dwell_fh = open(args.log_dwells, "a")
         dwell_log = DwellLog(satcat, by_norad, dish=None,  # dish set below
-                             history=SatHistory())
+                             history=SatHistory(), log_fh=dwell_fh)
         if not args.slots:
             args.watch = True
 
@@ -418,6 +443,8 @@ def cmd_identify(args):
     finally:
         if dwell_log is not None:
             dwell_log.close()
+        if dwell_fh:
+            dwell_fh.close()
         if log_fh:
             log_fh.close()
         dish.close()
@@ -586,6 +613,11 @@ def main():
                          "dwell with start/end timestamps, transfer and the "
                          "all-time tally; combine with --satellite-info for "
                          "a full info block per new satellite (implies --watch)")
+    pi.add_argument("--log-dwells", nargs="?", default=None,
+                    const="dwells.jsonl", metavar="FILE.jsonl",
+                    help="append one JSON record per closed dwell, to "
+                         "dwells.jsonl unless a file is given "
+                         "(implies --dwells)")
     pi.set_defaults(func=cmd_identify)
 
     pn = sub.add_parser("info", help="show launch/age/orbit/status for "
