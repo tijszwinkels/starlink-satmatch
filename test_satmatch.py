@@ -195,7 +195,8 @@ def test_locate_recovers_position():
     segments = []
     seen = set()
     slot = 0
-    while len(segments) < 3 and slot < 40:  # distinct sats across fake slots
+    # 4+ distinct-satellite tracks: 3 can under-constrain the position fit
+    while len(segments) < 4 and slot < 60:
         t = t0 + timedelta(seconds=45 * slot)
         slot += 1
         target = _pick_visible_sat(sats, t, exclude=seen)
@@ -205,7 +206,7 @@ def test_locate_recovers_position():
         points = extract_trail(_render_track(target, t))
         annotate_azel(points, FRAME_UT, GEOM, STATE)
         segments.extend(s for s in segment_trail(points) if len(s.points) >= 3)
-    assert len(segments) >= 3, len(segments)
+    assert len(segments) >= 4, len(segments)
 
     lat, lon, residual, _ = run_locate(
         segments, sats, seed=(TEST_LAT + 1.3, TEST_LON - 1.1))
@@ -316,7 +317,71 @@ def test_dwell_log_transfer_integration():
     # window [t0, t0+21.5] -> 22 one-second samples at 1 MB/s / 100 kB/s
     assert "↓ 22.0 MB" in a_close, a_close
     assert "↑ 2.2 MB" in a_close, a_close
-    assert a_close.index("↓") < a_close.index("UTC"), a_close  # before timestamp
+    assert a_close.index("UTC") < a_close.index("↓"), a_close  # timestamp first
+    # average rates over the 21.5 s window
+    assert "(8.2 Mbit/s)" in a_close, a_close
+    assert "(818.6 kbit/s)" in a_close, a_close
+
+
+def test_sat_history_persistence(tmpdir="/tmp/satmatch-test-history.json"):
+    import os
+    from history import SatHistory
+    if os.path.exists(tmpdir):
+        os.remove(tmpdir)
+    h = SatHistory(path=tmpdir)
+    h.record_dwell(111, "STARLINK-A", slots=2, down_bytes=10e6, up_bytes=1e6,
+                   seconds=30.0)
+    h.record_dwell(111, "STARLINK-A", slots=3, down_bytes=5e6, up_bytes=0.5e6,
+                   seconds=14.5)
+    h.record_dwell(222, "STARLINK-B", slots=1, down_bytes=1e6, up_bytes=0.1e6,
+                   seconds=15.0)
+    # a fresh instance must see the accumulated state from disk
+    h2 = SatHistory(path=tmpdir)
+    e = h2.get(111)
+    assert e["dwells"] == 2 and e["slots"] == 5, e
+    assert e["down_bytes"] == 15e6 and e["up_bytes"] == 1.5e6, e
+    assert e["seconds"] == 44.5, e
+    assert e["name"] == "STARLINK-A" and "last_seen" in e, e
+    assert h2.get(222)["dwells"] == 1
+    assert h2.get(333) is None
+    os.remove(tmpdir)
+
+
+def test_dwell_log_history_line(tmppath="/tmp/satmatch-test-history2.json"):
+    import contextlib
+    import io
+    import os
+    from history import SatHistory
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    if os.path.exists(tmppath):
+        os.remove(tmppath)
+
+    def seg(norad, name, ts):
+        s = Segment(points=[type("P", (), {"t": ts})(),
+                            type("P", (), {"t": ts + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    log = DwellLog(satcat={}, by_norad={}, dish=None,
+                   history=SatHistory(path=tmppath))
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        log.observe([seg(111, "STARLINK-A", 1000.0)])   # dwell 1: A
+        log.observe([seg(222, "STARLINK-B", 1030.0)])   # closes A, opens B
+        log.observe([seg(111, "STARLINK-A", 1060.0)])   # closes B, A again
+        log.close()                                     # dwell 3 closes
+    sums = [l for l in out.getvalue().splitlines() if "∑" in l]
+    assert len(sums) == 3, sums
+    assert "1 dwell ·" in sums[0] and "STARLINK" not in sums[0], sums[0]
+    assert "1 dwell ·" in sums[1], sums[1]
+    assert "2 dwells ·" in sums[2], sums[2]   # A's second dwell
+    # A's windows: [1000, 1021.5] + [1051.5, 1073] -> 43 s total
+    assert "· 43 s ·" in sums[2], sums[2]
+    os.remove(tmppath)
 
 
 def test_segmentation_splits_jumps():

@@ -1,4 +1,5 @@
 __pycache__/
 tle_cache/
 location.json
+sat_history.json
 *.jsonl

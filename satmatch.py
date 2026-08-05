@@ -118,6 +118,22 @@ def fmt_bytes(n):
     return f"{n:.0f} B"
 
 
+def fmt_rate(bps):
+    for div, unit in ((1e6, "Mbit/s"), (1e3, "kbit/s")):
+        if bps >= div:
+            return f"{bps / div:.1f} {unit}"
+    return f"{bps:.0f} bit/s"
+
+
+def fmt_duration(s):
+    s = int(round(s))
+    if s < 60:
+        return f"{s} s"
+    if s < 3600:
+        return f"{s // 60} m {s % 60:02d} s"
+    return f"{s // 3600} h {s % 3600 // 60:02d} m"
+
+
 class DwellLog:
     """--dwells mode: print only serving-satellite changes.
 
@@ -135,10 +151,11 @@ class DwellLog:
     beam switch.
     """
 
-    def __init__(self, satcat, by_norad, dish=None):
+    def __init__(self, satcat, by_norad, dish=None, history=None):
         self.satcat = satcat
         self.by_norad = by_norad   # reassigned on mid-run TLE refresh
         self.dish = dish
+        self.history = history     # SatHistory, or None to skip the tally
         self.cur = None
 
     @staticmethod
@@ -182,21 +199,21 @@ class DwellLog:
             print("  " + satinfo.format_info(
                 sat, self.satcat.get(sat.norad), True).replace("\n", "\n  "))
 
-    def _transfer(self, win_start, end_t):
-        """'↓ x ↑ y · ' for the window, or '' when history is unavailable."""
+    def _measure_transfer(self, win_start, end_t):
+        """(down_bytes, up_bytes, is_lower_bound) for the window, or None
+        when the dish's throughput history is unavailable."""
         if self.dish is None:
-            return ""
+            return None
         try:
             need = time.time() - win_start + 5.0
             ts, down, up = self.dish.get_history_throughput(need)
         except Exception as e:
             logger.warning("throughput history unavailable: %s", e)
-            return ""
+            return None
         dn = sum(b for t, b in zip(ts, down) if win_start <= t <= end_t) / 8.0
         ub = sum(b for t, b in zip(ts, up) if win_start <= t <= end_t) / 8.0
         # ring didn't reach back to the window start -> lower bound
-        approx = "≥" if ts and ts[0] > win_start + 1.5 else ""
-        return f"↓ {approx}{fmt_bytes(dn)} ↑ {approx}{fmt_bytes(ub)} · "
+        return dn, ub, bool(ts) and ts[0] > win_start + 1.5
 
     def close(self, end_t=None):
         if self.cur is None:
@@ -205,11 +222,27 @@ class DwellLog:
         self.cur = None
         if end_t is None:
             end_t = d["last_seen"]
-        dur = end_t - d["win_start"]
-        print(f"■ {self._transfer(d['win_start'], end_t)}"
-              f"{self._stamp(end_t)} UTC — tracked {dur:.0f} s · "
+        dur = max(end_t - d["win_start"], 1.0)
+        xfer = self._measure_transfer(d["win_start"], end_t)
+        lead = ""
+        if xfer is not None:
+            dn, ub, approx = xfer
+            a = "≥" if approx else ""
+            lead = (f"↓ {a}{fmt_bytes(dn)} ({fmt_rate(dn * 8.0 / dur)}) "
+                    f"↑ {a}{fmt_bytes(ub)} ({fmt_rate(ub * 8.0 / dur)}) · ")
+        print(f"■ {self._stamp(end_t)} UTC — {lead}tracked {dur:.0f} s · "
               f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
               f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
+        if self.history is not None:
+            dn, ub = (xfer[0], xfer[1]) if xfer is not None else (0.0, 0.0)
+            e = self.history.record_dwell(
+                d["norad"], d["name"], d["confirmed"], dn, ub, seconds=dur,
+                when=datetime.fromtimestamp(end_t, tz=timezone.utc))
+            print(f"  ∑ all-time with this satellite: "
+                  f"{e['dwells']} dwell{'s' if e['dwells'] != 1 else ''} · "
+                  f"{e['slots']} slot{'s' if e['slots'] != 1 else ''} · "
+                  f"{fmt_duration(e['seconds'])} · "
+                  f"↓ {fmt_bytes(e['down_bytes'])} ↑ {fmt_bytes(e['up_bytes'])}")
         print()
 
 
@@ -269,7 +302,9 @@ def cmd_identify(args):
 
     dwell_log = None
     if args.dwells:
-        dwell_log = DwellLog(satcat, by_norad, dish=None)  # dish set below
+        from history import SatHistory
+        dwell_log = DwellLog(satcat, by_norad, dish=None,  # dish set below
+                             history=SatHistory())
         if not args.slots:
             args.watch = True
 
