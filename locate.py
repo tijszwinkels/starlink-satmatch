@@ -61,10 +61,14 @@ def grid_search(segments_data, lat_range, lon_range, step, progress=None):
     return best
 
 
-def locate(segments, satellites, seed=None, span_deg=4.0):
+DEFAULT_BOX = (45.0, 72.0, -11.0, 32.0)  # Europe
+
+
+def locate(segments, satellites, seed=None, span_deg=4.0, box=None):
     """Multi-stage grid search. seed=(lat, lon) narrows the first stage;
-    without it the whole 45..72N / -11..32E box is scanned (Starlink dishes
-    in Europe; widen for other continents).
+    box=(lat0, lat1, lon0, lon1) sets the coarse search area instead.
+    Without either, DEFAULT_BOX (Europe) is scanned — callers should warn
+    users elsewhere in the world to pass one of the two.
 
     Returns (lat, lon, residual_deg, per_segment: [(eps, name)]).
     """
@@ -74,7 +78,8 @@ def locate(segments, satellites, seed=None, span_deg=4.0):
         stages = [((seed[0] - span_deg, seed[0] + span_deg),
                    (seed[1] - span_deg * 2, seed[1] + span_deg * 2), 0.5)]
     else:
-        stages = [((45.0, 72.0), (-11.0, 32.0), 1.0)]
+        b = box or DEFAULT_BOX
+        stages = [((b[0], b[1]), (b[2], b[3]), 1.0)]
 
     best = None
     for lat_range, lon_range, step in stages:

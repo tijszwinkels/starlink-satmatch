@@ -49,6 +49,7 @@ SLOT_OFFSET = 12          # slot boundaries at :12/:27/:42/:57 UTC
 SAMPLE_WINDOW = 13.5      # stop sampling this long after the boundary
 CONFIDENT_P = 0.75
 CONFIDENT_EPS = 3.0       # a lone bad match is not a confident match
+MAX_SLOT_FAILURES = 40    # consecutive gRPC failures before giving up (~10 min)
 
 
 def is_confident(c):
@@ -201,7 +202,8 @@ class DwellLog:
                 continue
             if self.cur and c.norad == self.cur["norad"]:
                 self.cur["last_seen"] = seg.t_end
-                self.cur["confirmed"] += 1
+                self.cur["slot_set"].add(slot_index(seg.t_start))
+                self.cur["n_segs"] += 1
                 self.cur["eps_sum"] += c.eps_deg
                 self._publish_current()   # refresh the "updated" stamp
             else:
@@ -219,7 +221,8 @@ class DwellLog:
                             "start": seg.t_start, "last_seen": seg.t_end,
                             "win_start": (cut if cut is not None
                                           else slot_boundary_before(seg.t_start)),
-                            "confirmed": 1, "elapsed": 0,
+                            "slot_set": {slot_index(seg.t_start)},
+                            "n_segs": 1, "elapsed": 0,
                             "eps_sum": c.eps_deg}
                 self._publish_current()
                 self._print_open(c)
@@ -270,9 +273,11 @@ class DwellLog:
             a = "≥" if approx else ""
             lead = (f"↓ {a}{fmt_bytes(dn)} ({fmt_rate(dn * 8.0 / dur)}) "
                     f"↑ {a}{fmt_bytes(ub)} ({fmt_rate(ub * 8.0 / dur)}) · ")
+        n_conf = len(d["slot_set"])
+        mean_eps = d["eps_sum"] / d["n_segs"]
         print(f"■ {self._stamp(end_t)} UTC · {lead}tracked {dur:.0f} s · "
-              f"confirmed in {d['confirmed']}/{d['elapsed']} slot(s) · "
-              f"mean ε {d['eps_sum'] / d['confirmed']:.1f}°")
+              f"confirmed in {n_conf}/{d['elapsed']} slot(s) · "
+              f"mean ε {mean_eps:.1f}°")
         if self.log_fh is not None:
             def iso(t):
                 return datetime.fromtimestamp(t, tz=timezone.utc).isoformat(
@@ -282,9 +287,10 @@ class DwellLog:
                 "start": iso(d["win_start"]), "end": iso(end_t),
                 "seconds": round(dur, 1),
                 "name": d["name"], "norad": d["norad"],
-                "slots_confirmed": d["confirmed"],
+                "slots_confirmed": n_conf,
                 "slots_elapsed": d["elapsed"],
-                "mean_eps_deg": round(d["eps_sum"] / d["confirmed"], 2),
+                "segments": d["n_segs"],
+                "mean_eps_deg": round(mean_eps, 2),
                 "first_evidence": iso(d["start"]),
                 "last_evidence": iso(d["last_seen"]),
                 "down_bytes": round(dn) if dn is not None else None,
@@ -295,7 +301,7 @@ class DwellLog:
         if self.history is not None:
             dn, ub = (xfer[0], xfer[1]) if xfer is not None else (0.0, 0.0)
             e = self.history.record_dwell(
-                d["norad"], d["name"], d["confirmed"], dn, ub, seconds=dur,
+                d["norad"], d["name"], n_conf, dn, ub, seconds=dur,
                 when=datetime.fromtimestamp(end_t, tz=timezone.utc))
             print(f"  ∑ all-time with this satellite: "
                   f"{e['dwells']} dwell{'s' if e['dwells'] != 1 else ''} · "
@@ -376,7 +382,11 @@ def cmd_identify(args):
     dish = Dish(target=args.target)
     if dwell_log is not None:
         dwell_log.dish = dish
-    state = dish.get_state()
+    try:
+        state = dish.get_state()
+    except Exception as e:
+        sys.exit(f"cannot reach the dish at "
+                 f"{args.target or '192.168.100.1:9200'}: {e}")
     print(f"Dish: {state.hardware} · {state.state} · "
           f"boresight az {state.boresight_az_deg:.1f}° el {state.boresight_el_deg:.1f}° "
           f"(tilt {state.tilt_deg:.1f}°) · attitude {state.attitude_state} "
@@ -398,31 +408,46 @@ def cmd_identify(args):
     tally = {}   # name -> [wins, sum_eps, sum_p]
     info_shown = set()
     slot_idx = 0
+    grpc_failures = 0   # consecutive; dish reboots (fw updates) last minutes
     try:
         while True:
-            slot_idx += 1
-            # long --watch runs: pick up fresh TLEs between slots
-            if not args.offline and time.time() - tle_loaded > args.tle_max_age * 3600:
-                sats, catalog, age = load_catalogue(
-                    args.catalog, args.tle_max_age, offline=args.offline)
-                by_norad = {s.norad: s for s in sats}
+            try:
+                # long --watch runs: pick up fresh TLEs between slots
+                if (not args.offline
+                        and time.time() - tle_loaded > args.tle_max_age * 3600):
+                    sats, catalog, age = load_catalogue(
+                        args.catalog, args.tle_max_age, offline=args.offline)
+                    by_norad = {s.norad: s for s in sats}
+                    if dwell_log is not None:
+                        dwell_log.by_norad = by_norad
+                    tle_loaded = time.time()
+                    print(f"(catalogue refreshed: {len(sats)} satellites, "
+                          f"{age:.1f} h old)")
+                boundary = wait_for_slot_boundary()
+                state = dish.get_state()
+                samples = collect_slot(dish, boundary)
+                slot_idx += 1
+                points = extract_trail(samples)
+                annotate_azel(points, frame, samples[0].geom, state)
+                segments = [score_segment(s, sats, lat, lon, alt_m)
+                            for s in segment_trail(points)]
                 if dwell_log is not None:
-                    dwell_log.by_norad = by_norad
-                tle_loaded = time.time()
-                print(f"(catalogue refreshed: {len(sats)} satellites, "
-                      f"{age:.1f} h old)")
-            boundary = wait_for_slot_boundary()
-            state = dish.get_state()
-            samples = collect_slot(dish, boundary)
-            points = extract_trail(samples)
-            annotate_azel(points, frame, samples[0].geom, state)
-            segments = [score_segment(s, sats, lat, lon, alt_m)
-                        for s in segment_trail(points)]
-            if dwell_log is not None:
-                dwell_log.observe(segments)
-            else:
-                print_slot_result(slot_idx, boundary, points, segments)
-            log_slot(log_fh, boundary, state, points, segments)
+                    dwell_log.observe(segments)
+                else:
+                    print_slot_result(slot_idx, boundary, points, segments)
+                log_slot(log_fh, boundary, state, points, segments)
+                grpc_failures = 0
+            except Exception as e:
+                # survive dish reboots / transient gRPC errors in --watch
+                grpc_failures += 1
+                logger.warning("slot failed (%d consecutive): %s",
+                               grpc_failures, e)
+                if grpc_failures >= MAX_SLOT_FAILURES:
+                    print(f"\nGiving up after {grpc_failures} consecutive "
+                          "failures (~10 min) — dish unreachable?")
+                    break
+                time.sleep(2.0)
+                continue
 
             slot_confident = False
             for seg in segments:
@@ -536,6 +561,9 @@ def cmd_locate(args):
 
     segments = []
     if args.from_log:
+        # Note: reuses the el/az annotated at log time. If the projection
+        # model changes, re-annotate from the raw x/y + logged dish state
+        # instead (analyze_geometry.py shows how).
         for line in Path(args.from_log).read_text().splitlines():
             rec = json.loads(line)
             points = [TrailPoint(t=p["t"], x=p["x"], y=p["y"],
@@ -545,7 +573,6 @@ def cmd_locate(args):
                             if len(s.points) >= 3)
     else:
         dish = Dish(target=args.target)
-        state = dish.get_state()
         frame = dish.get_map().frame
         print(f"Collecting {args.slots} slots of beam tracks "
               "(this resets the obstruction map each slot)...")
@@ -566,9 +593,24 @@ def cmd_locate(args):
                  "(try more slots)")
 
     seed = parse_latlon(args.seed)[:2] if args.seed else None
-    print(f"Grid-searching{' around ' + str(seed) if seed else ' Europe box'} "
-          f"over {len(segments)} segments...")
-    lat, lon, residual, per_segment = locate_mod.locate(segments, sats, seed=seed)
+    box = None
+    if args.box:
+        parts = [float(x) for x in args.box.split(",")]
+        if len(parts) != 4:
+            sys.exit("--box needs LAT0,LAT1,LON0,LON1")
+        box = tuple(parts)
+    if seed:
+        where = f" around {seed}"
+    elif box:
+        where = f" in box {box}"
+    else:
+        b = locate_mod.DEFAULT_BOX
+        where = f" in the default box ({b[0]:.0f}..{b[1]:.0f}N, {b[2]:.0f}..{b[3]:.0f}E)"
+        print("NOTE: the default search area covers Europe only — pass "
+              "--seed LAT,LON or --box LAT0,LAT1,LON0,LON1 elsewhere.")
+    print(f"Grid-searching{where} over {len(segments)} segments...")
+    lat, lon, residual, per_segment = locate_mod.locate(segments, sats,
+                                                        seed=seed, box=box)
 
     print(f"\nBest location: {lat:.4f}, {lon:.4f}  "
           f"(mean residual {residual:.2f}°, ~{residual * 9.6:.0f} km position "
@@ -656,6 +698,8 @@ def main():
                          "of collecting live")
     pl.add_argument("--seed", default=None, metavar="LAT,LON",
                     help="approximate position to search around")
+    pl.add_argument("--box", default=None, metavar="LAT0,LAT1,LON0,LON1",
+                    help="coarse search area (default: Europe, 45..72N -11..32E)")
     pl.set_defaults(func=cmd_locate)
 
     pt = sub.add_parser("tle", help="show/refresh the cached catalogue")
@@ -665,7 +709,13 @@ def main():
     args = p.parse_args()
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
-    args.func(args)
+    try:
+        args.func(args)
+    except RuntimeError as e:
+        # friendly form of e.g. "no cached catalogue with --offline"
+        if args.verbose:
+            raise
+        sys.exit(f"error: {e}")
 
 
 if __name__ == "__main__":

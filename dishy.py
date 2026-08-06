@@ -41,7 +41,6 @@ class DishState:
 class MapSample:
     t: float            # unix time when the response was received
     lit: np.ndarray     # bool (rows, cols): pixel has been used
-    valid: np.ndarray   # bool (rows, cols): pixel is inside the FOV
     frame: int
     geom: MapGeometry
 
@@ -84,7 +83,6 @@ class Dish:
         return MapSample(
             t=t,
             lit=arr > 0.0,
-            valid=arr >= 0.0,
             frame=int(m.map_reference_frame),
             geom=MapGeometry(n_rows=m.num_rows, n_cols=m.num_cols,
                              max_theta_deg=m.max_theta_deg or 80.0),

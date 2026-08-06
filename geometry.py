@@ -35,7 +35,10 @@ class MapGeometry:
 
     @property
     def center(self) -> int:
-        # LEOViz convention: 62 for the 123-wide grid.
+        # Inherited LEOViz convention (62 for the 123-wide grid), empirically
+        # validated at 0.79 deg mean residual on that grid — NOT derived
+        # geometry. If firmware ever changes the grid size, re-validate the
+        # +1 (and FRAME_EARTH's y-flip) against real tracks first.
         return self.n_cols // 2 + 1
 
     @property

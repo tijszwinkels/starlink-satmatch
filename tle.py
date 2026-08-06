@@ -48,32 +48,43 @@ class Satellite:
         return f"Satellite({self.name}, norad={self.norad})"
 
 
-def _cache_path(catalog: str) -> Path:
-    return CACHE_DIR / f"{catalog}-starlink.tle"
-
-
-def cache_age_hours(catalog: str):
-    path = _cache_path(catalog)
+def file_age_hours(path: Path):
+    """Age of a file in hours, or None if it doesn't exist."""
     if not path.exists():
         return None
     return (time.time() - path.stat().st_mtime) / 3600.0
 
 
-def download(catalog: str) -> Path:
-    """Download the given catalogue to the cache, atomically."""
-    url = URLS[catalog]
-    path = _cache_path(catalog)
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    logger.info("Downloading %s catalogue from %s", catalog, url)
-    with urllib.request.urlopen(url, timeout=60) as resp:
+def download_atomic(url: str, path: Path, min_bytes: int,
+                    head_check=None, timeout: float = 60.0):
+    """Download url to path atomically, refusing responses that fail a
+    size/content sanity check (never overwrites a good cache with junk)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Downloading %s", url)
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
         data = resp.read()
-    if len(data) < 10000 or b"STARLINK" not in data[:2000]:
-        raise RuntimeError(f"TLE download from {url} looks wrong "
+    if len(data) < min_bytes or (head_check and not head_check(data)):
+        raise RuntimeError(f"download from {url} looks wrong "
                            f"({len(data)} bytes); not overwriting cache")
+    tmp = path.with_suffix(".tmp")
     tmp.write_bytes(data)
     tmp.replace(path)
     return path
+
+
+def _cache_path(catalog: str) -> Path:
+    return CACHE_DIR / f"{catalog}-starlink.tle"
+
+
+def cache_age_hours(catalog: str):
+    return file_age_hours(_cache_path(catalog))
+
+
+def download(catalog: str) -> Path:
+    """Download the given catalogue to the cache, atomically."""
+    return download_atomic(URLS[catalog], _cache_path(catalog),
+                           min_bytes=10000,
+                           head_check=lambda d: b"STARLINK" in d[:2000])
 
 
 def parse_tle_file(path: Path, include_dtc: bool = True):
@@ -113,4 +124,8 @@ def load_catalogue(catalog: str = "sup", max_age_hours: float = 12.0,
             logger.info("Loaded %d satellites from %s catalogue (%.1f h old, DTC %s)",
                         len(sats), cat, age, "included" if include_dtc else "excluded")
             return sats, cat, age
-    raise RuntimeError(f"No usable TLE catalogue (last error: {last_err})")
+    if offline:
+        raise RuntimeError(f"no TLE catalogue cached in {CACHE_DIR}; "
+                           "run once without --offline to download it")
+    raise RuntimeError(f"no TLE catalogue in {CACHE_DIR} and downloads "
+                       f"failed (last error: {last_err})")

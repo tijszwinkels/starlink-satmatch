@@ -9,11 +9,10 @@ from the launch date (clearly labelled as a heuristic).
 import csv
 import logging
 import math
-import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from tle import CACHE_DIR
+from tle import CACHE_DIR, download_atomic, file_age_hours
 
 logger = logging.getLogger(__name__)
 
@@ -72,31 +71,26 @@ class SatcatEntry:
 
 
 def _fetch_satcat():
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = SATCAT_PATH.with_suffix(".tmp")
-    logger.info("Downloading SATCAT from %s", SATCAT_URL)
-    with urllib.request.urlopen(SATCAT_URL, timeout=120) as resp:
-        data = resp.read()
-    if len(data) < 1_000_000 or not data.startswith(b"OBJECT_NAME,"):
-        raise RuntimeError(f"SATCAT download looks wrong ({len(data)} bytes)")
-    tmp.write_bytes(data)
-    tmp.replace(SATCAT_PATH)
+    download_atomic(SATCAT_URL, SATCAT_PATH, min_bytes=1_000_000,
+                    head_check=lambda d: d.startswith(b"OBJECT_NAME,"),
+                    timeout=120.0)
 
 
 def load_satcat(max_age_hours=SATCAT_MAX_AGE_HOURS, offline=False):
     """dict: NORAD id -> SatcatEntry for all Starlink objects."""
-    import time
-    age = None
-    if SATCAT_PATH.exists():
-        age = (time.time() - SATCAT_PATH.stat().st_mtime) / 3600.0
+    age = file_age_hours(SATCAT_PATH)
     if not offline and (age is None or age > max_age_hours):
         try:
             _fetch_satcat()
         except Exception as e:
             if age is None:
-                raise
+                raise RuntimeError(
+                    f"no cached SATCAT and the download failed: {e}") from e
             logger.warning("SATCAT refresh failed, using %.0f h old cache: %s",
                            age, e)
+    if not SATCAT_PATH.exists():
+        raise RuntimeError(f"no SATCAT cached at {SATCAT_PATH}; "
+                           "run once without --offline to download it")
 
     out = {}
     with open(SATCAT_PATH, newline="") as fh:
@@ -180,7 +174,7 @@ def format_info(sat, entry, in_ephemerides_feed):
         lines.append(f"    status:   {status} (SATCAT "
                      f"'{entry.ops_status_code or '?'}') · {feed}")
     peri, apo, incl, period = orbit_from_satrec(sat.satrec)
-    epoch_days = (datetime.utcnow() - _satrec_epoch(sat.satrec)).days
+    epoch_days = (datetime.now(timezone.utc) - _satrec_epoch(sat.satrec)).days
     lines.append(f"    orbit:    {peri:.0f} × {apo:.0f} km · incl {incl:.1f}° "
                  f"· period {period:.1f} min  [TLE {epoch_days} d old]")
     return "\n".join(lines)
@@ -188,4 +182,5 @@ def format_info(sat, entry, in_ephemerides_feed):
 
 def _satrec_epoch(satrec):
     jd = satrec.jdsatepoch + satrec.jdsatepochF
-    return datetime(2000, 1, 1, 12) + timedelta(days=jd - 2451545.0)
+    return (datetime(2000, 1, 1, 12, tzinfo=timezone.utc)
+            + timedelta(days=jd - 2451545.0))

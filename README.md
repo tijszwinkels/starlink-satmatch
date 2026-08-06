@@ -45,7 +45,8 @@ and adds two things:
    access on local network" off). `locate` grid-searches for the observer
    position that makes the observed beam tracks consistent with the
    catalogue — a few minutes of observation pins the dish to ~10–20 km.
-   The satellites tell you where you are.
+   The satellites tell you where you are. (The default search area covers
+   Europe; elsewhere pass `--seed LAT,LON` or `--box LAT0,LAT1,LON0,LON1`.)
 
 ## Install
 
