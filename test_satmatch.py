@@ -498,6 +498,40 @@ def test_bearing_sanity():
     assert 80.0 < b < 100.0, b
 
 
+def test_dwell_log_publishes_current_satellite():
+    import contextlib
+    import io
+    import json as jsonlib
+    import tempfile
+    from pathlib import Path
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, name, ts):
+        s = Segment(points=[type("P", (), {"t": ts})(),
+                            type("P", (), {"t": ts + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "current.json"
+        log = DwellLog(satcat=None, by_norad={}, current_path=path)
+        with contextlib.redirect_stdout(io.StringIO()):
+            log.observe([seg(111, "STARLINK-A", 1000.0)])
+            doc = jsonlib.loads(path.read_text())
+            assert doc["norad"] == 111 and doc["name"] == "STARLINK-A", doc
+            assert doc["since"].startswith("1970-01-01T00:16:40"), doc
+            first_updated = doc["updated"]
+            log.observe([seg(222, "STARLINK-B", 1030.0)])   # handover
+            log.close()
+        doc = jsonlib.loads(path.read_text())
+        assert doc["norad"] == 222, doc
+        assert doc["updated"] >= first_updated
+        assert not path.with_suffix(".tmp").exists()   # atomic write cleaned up
+
+
 def main():
     failures = 0
     for name, fn in sorted(globals().items()):
@@ -518,3 +552,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

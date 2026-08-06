@@ -167,13 +167,25 @@ class DwellLog:
     closes at the end of its last confirmed slot (or now, if earlier).
     """
 
-    def __init__(self, satcat, by_norad, dish=None, history=None, log_fh=None):
+    def __init__(self, satcat, by_norad, dish=None, history=None, log_fh=None,
+                 current_path=None):
         self.satcat = satcat
         self.by_norad = by_norad   # reassigned on mid-run TLE refresh
         self.dish = dish
         self.history = history     # SatHistory, or None to skip the tally
         self.log_fh = log_fh       # append-only JSONL, one record per dwell
+        self.current_path = current_path  # live current-satellite file, or None
         self.cur = None
+
+    def _publish_current(self):
+        if self.current_path is None or self.cur is None:
+            return
+        try:
+            from history import write_current
+            write_current(self.cur["norad"], self.cur["name"],
+                          self.cur["start"], self.current_path)
+        except OSError as e:
+            logger.warning("current-satellite file write failed: %s", e)
 
     @staticmethod
     def _stamp(t):
@@ -191,6 +203,7 @@ class DwellLog:
                 self.cur["last_seen"] = seg.t_end
                 self.cur["confirmed"] += 1
                 self.cur["eps_sum"] += c.eps_deg
+                self._publish_current()   # refresh the "updated" stamp
             else:
                 cut = None
                 if self.cur is not None:
@@ -208,6 +221,7 @@ class DwellLog:
                                           else slot_boundary_before(seg.t_start)),
                             "confirmed": 1, "elapsed": 0,
                             "eps_sum": c.eps_deg}
+                self._publish_current()
                 self._print_open(c)
         if self.cur is not None:
             self.cur["elapsed"] += 1
@@ -350,11 +364,12 @@ def cmd_identify(args):
     dwell_log = None
     dwell_fh = None
     if args.dwells:
-        from history import SatHistory
+        from history import SatHistory, CURRENT_PATH
         if args.log_dwells:
             dwell_fh = open(args.log_dwells, "a")
         dwell_log = DwellLog(satcat, by_norad, dish=None,  # dish set below
-                             history=SatHistory(), log_fh=dwell_fh)
+                             history=SatHistory(), log_fh=dwell_fh,
+                             current_path=CURRENT_PATH)
         if not args.slots:
             args.watch = True
 

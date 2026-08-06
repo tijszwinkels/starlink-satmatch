@@ -55,3 +55,22 @@ class SatHistory:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.data, indent=1, sort_keys=True))
         tmp.replace(self.path)
+
+
+CURRENT_PATH = Path(__file__).resolve().parent / "visualization" / "current.json"
+
+
+def write_current(norad, name, since_t, path=CURRENT_PATH):
+    """Atomically publish the currently-serving satellite for live viewers
+    (the visualization polls this file). since_t: dwell start, epoch seconds."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {
+        "norad": norad, "name": name,
+        "since": datetime.fromtimestamp(since_t, tz=timezone.utc).isoformat(
+            timespec="seconds"),
+        "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(doc))
+    tmp.replace(path)
