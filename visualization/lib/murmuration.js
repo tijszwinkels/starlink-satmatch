@@ -48,7 +48,7 @@ export class Murmuration {
     this._categoryColors = new Map();
 
     this.ui = new UI(opts.container, opts.facets, this._callbacks(),
-      ["grid", "graph", ...(opts.orbitView ? ["orbit"] : [])]);
+      [...(opts.orbitView ? ["orbit"] : []), "graph", "grid"]);
     const variantCounts = new Map();
     for (const item of this.items) {
       const v = opts.variantOf(item);
@@ -125,7 +125,7 @@ export class Murmuration {
     });
     const delay = animate && leavers.length ? TIMING.staggerMs : 0;
     if (s.view === "orbit") {
-      this.renderer.enterOrbit({ delay, duration: TIMING.moveMs, now });
+      this.renderer.enterOrbit({ delay, duration: TIMING.moveMs, now, animate });
       if (this._shownView !== "orbit") this.opts.orbitView.enter();
     } else {
       this.renderer.fitBounds(b, { animate, delay, duration: TIMING.moveMs, now });
@@ -295,6 +295,7 @@ export class Murmuration {
         this.update();
       },
       onColorStops: (id, stops) => this.setColorStops(id, stops),
+      onScale: (id, scale) => this.setScale(id, scale),
       onSearch: text => {
         s().filters = setFilter(s().filters, "search", text ? { text } : null);
         this.update();
@@ -330,6 +331,16 @@ export class Murmuration {
    *  Color extents are recomputed — live data can grow past cached ranges. */
   refresh() {
     this._extents.clear();
+    this.update();
+  }
+
+  /** Switch a numeric facet between linear and log scale (color editor
+   *  checkbox) — affects color, filter histogram and graph bucketing. */
+  setScale(facetId, scale) {
+    const f = this.byId.get(facetId);
+    f.scale = scale === "log" ? "log" : undefined;
+    this._extents.clear();
+    this.opts.onScale?.(facetId, scale);
     this.update();
   }
 

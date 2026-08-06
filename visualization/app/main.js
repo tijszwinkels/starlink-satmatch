@@ -31,7 +31,9 @@ const DEFAULT_STOPS = {
   ever: ["#4a4a48", "#d8d7cf"],       // dim gray -> bright gray
 };
 const STORAGE_KEY = "murmuration.colorStops";
+const SCALE_KEY = "murmuration.scales";
 const savedStops = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+const savedScales = JSON.parse(localStorage.getItem(SCALE_KEY) ?? "{}");
 const stopsFor = id => savedStops[id] ?? DEFAULT_STOPS[id];
 const rampFor = id => makeTwoColorRamp(...stopsFor(id));
 
@@ -198,10 +200,17 @@ async function boot() {
     .reduce((a, b) => (a && a.last_ms > b.last_ms ? a : b), null);
   if (prevCandidate) prevCandidate.is_prev = true;
 
+  const facets = makeFacets();
+  for (const f of facets) {
+    if (savedScales[f.id]) {
+      f.scale = savedScales[f.id] === "log" ? "log" : undefined;
+    }
+  }
+
   const mm = new Murmuration({
     container: document.getElementById("app"),
     items,
-    facets: makeFacets(),
+    facets,
     idOf: s => s.norad,
     variantOf: s => !s.type ? "unknown" : s.type.includes("V2") ? "v2" : "v1",
     variants: VARIANTS,
@@ -214,10 +223,14 @@ async function boot() {
     baseColor: s => s.is_last ? hexToRgb(HUE.green)
       : s.is_prev ? hexToRgb(PREV_GREEN)
       : s.ever ? BRIGHT : DIM,
-    defaults: { view: "grid", sortId: "launched", bucketId: "type" },
+    defaults: { view: "orbit", sortId: "launched", bucketId: "type" },
     onColorStops: (id, stops) => {
       savedStops[id] = stops;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(savedStops));
+    },
+    onScale: (id, scale) => {
+      savedScales[id] = scale;
+      localStorage.setItem(SCALE_KEY, JSON.stringify(savedScales));
     },
   });
   mm.setPulse(doc.last_connected_norad);

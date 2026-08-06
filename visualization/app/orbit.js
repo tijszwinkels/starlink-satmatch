@@ -93,7 +93,7 @@ export function createOrbitView(items, observer) {
       return {
         theta: Math.atan2(p.z, p.x),
         phi: Math.acos(p.y / r),
-        radius: 4200,
+        radius: 1400,          // startup framing: dish region ~ country scale
       };
     },
 

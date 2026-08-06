@@ -161,7 +161,13 @@ export class Renderer {
     this.stateTween = { from: { ...this.view }, to, start: now + delay, duration, ease: easeCircInOut };
   }
 
-  enterOrbit({ delay = 0, duration = 900, now = performance.now() } = {}) {
+  enterOrbit({ delay = 0, duration = 900, now = performance.now(), animate = true } = {}) {
+    if (!animate) {
+      this.mode = "orbit";
+      this.camTween = this.stateTween = null;
+      this._applyCamera();
+      return;
+    }
     if (this.mode === "orbit" && !this.camTween) return;
     this._flyTo("orbit", { delay, duration, now });
   }

@@ -136,6 +136,16 @@ export class UI {
     });
     pop.append(el("span", "mm-colorpop-label", "low"), inputs[0],
       el("span", "mm-colorpop-label", "high"), inputs[1]);
+    if (facet.type === "number") {
+      const label = el("label", "mm-colorpop-label mm-colorpop-log");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = facet.scale === "log";
+      box.onchange = () =>
+        this.cb.onScale(facet.id, box.checked ? "log" : "linear");
+      label.append(box, "log");
+      pop.append(label);
+    }
     const r = anchor.getBoundingClientRect();
     pop.style.left = `${r.left}px`;
     pop.style.top = `${r.bottom + 6}px`;
