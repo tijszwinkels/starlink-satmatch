@@ -9,6 +9,7 @@
 
 import * as THREE from "../lib/vendor/three.module.js";
 import * as satellite from "../lib/vendor/satellite.es.js";
+import { createTileOverlay, ATTRIBUTION } from "./tiles.js";
 
 const KM = 0.1;                    // world units per km
 const R_EARTH = 6371 * KM;
@@ -21,15 +22,23 @@ const toWorld = ecf => ({ x: ecf.x * KM, y: ecf.z * KM, z: -ecf.y * KM });
 export function createOrbitView(items, observer) {
   const sats = new Map();          // norad -> {satrec, eciP, eciV, epochMs}
   let inited = false;
-  let group = null, lineMesh = null, globeMats = [];
+  let group = null, lineMesh = null, dishMesh = null;
+  let fadeMats = [];               // [{mat, base}] scaled together by fade
   let fade = null;                 // {from, to, start} for globe opacity
   let repropQueue = [];
+  let tiles = null, attributionEl = null;
 
-  const dishWorld = observer ? toWorld(satellite.geodeticToEcf({
-    latitude: observer.lat * Math.PI / 180,
-    longitude: observer.lon * Math.PI / 180,
-    height: (observer.alt_m ?? 0) / 1000,
-  })) : null;
+  // lifted just above the tile-patch shell so it never gets draped over
+  const dishWorld = observer ? (() => {
+    const e = toWorld(satellite.geodeticToEcf({
+      latitude: observer.lat * Math.PI / 180,
+      longitude: observer.lon * Math.PI / 180,
+      height: (observer.alt_m ?? 0) / 1000,
+    }));
+    const m = Math.hypot(e.x, e.y, e.z);
+    const r = R_EARTH * 1.008;
+    return { x: e.x / m * r, y: e.y / m * r, z: e.z / m * r };
+  })() : null;
 
   function propagateOne(entry, date) {
     const pv = satellite.propagate(entry.satrec, date);
@@ -103,15 +112,33 @@ export function createOrbitView(items, observer) {
           color: 0x1e3a5f, transparent: true, opacity: 0.35,
           side: THREE.BackSide,
         }));
+      // the globe is transparent (for the fade), so the whole stack lives
+      // in the transparent pass and needs explicit ordering:
+      // rim (-3) -> globe (-2) -> tile patch (-1) -> sprites & rings (0)
+      rim.renderOrder = -3;
+      globe.renderOrder = -2;
       group.add(globe, rim);
-      globeMats = [globe.material, rim.material];
+
+      tiles = createTileOverlay(group, {
+        radiusWorld: R_EARTH, worldPerKm: KM,
+      });
+      fadeMats = [
+        { mat: globe.material, base: 1 },
+        { mat: rim.material, base: 0.35 },
+        { mat: tiles.material, base: 1 },
+      ];
+      attributionEl = document.createElement("div");
+      attributionEl.className = "mm-attribution";
+      attributionEl.textContent = ATTRIBUTION;
+      attributionEl.style.display = "none";
+      document.querySelector(".mm-canvas-wrap")?.append(attributionEl);
 
       if (dishWorld) {
-        const dish = new THREE.Mesh(
+        dishMesh = new THREE.Mesh(
           new THREE.SphereGeometry(7, 16, 8),
           new THREE.MeshBasicMaterial({ color: 0x0ca30c }));
-        dish.position.set(dishWorld.x, dishWorld.y, dishWorld.z);
-        group.add(dish);
+        dishMesh.position.set(dishWorld.x, dishWorld.y, dishWorld.z);
+        group.add(dishMesh);
 
         const lineGeo = new THREE.BufferGeometry().setFromPoints(
           [new THREE.Vector3(), new THREE.Vector3()]);
@@ -134,21 +161,34 @@ export function createOrbitView(items, observer) {
     },
 
     /** Per-frame: fade globe; when active, drift satellites and track line. */
-    tick(nowMs, anim, currentId, active) {
+    tick(nowMs, anim, currentId, active, camPos) {
       if (!inited || !group) return;
 
       if (fade) {
         const t = Math.min(1, (nowMs - fade.start) / 700);
         const o = fade.from + (fade.to - fade.from) * t;
-        globeMats.forEach((m, i) => { m.opacity = i === 0 ? o : o * 0.35; });
+        for (const { mat, base } of fadeMats) mat.opacity = o * base;
         if (t >= 1) {
           if (fade.to === 0) group.visible = false;
           fade = null;
         }
       }
-      if (!active) {
+      if (!active || !camPos) {
         if (lineMesh) lineMesh.visible = false;
+        if (attributionEl) attributionEl.style.display = "none";
         return;
+      }
+
+      // the ground dot keeps a roughly constant apparent size
+      if (dishMesh) {
+        const d = Math.hypot(camPos.x - dishWorld.x, camPos.y - dishWorld.y,
+          camPos.z - dishWorld.z);
+        dishMesh.scale.setScalar(Math.min(1, Math.max(0.1, d / 3500)));
+      }
+
+      const showTiles = tiles.update(camPos, Date.now());
+      if (attributionEl) {
+        attributionEl.style.display = showTiles ? "block" : "none";
       }
 
       // rolling SGP4 refresh, a chunk per frame

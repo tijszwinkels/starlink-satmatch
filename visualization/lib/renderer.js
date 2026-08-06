@@ -169,7 +169,7 @@ export class Renderer {
   zoomBy(factor, clientX, clientY, { duration = 220, now = performance.now() } = {}) {
     if (this.camTween) this._settleTweens();
     if (this.mode === "orbit") {
-      this.orbit.radius = Math.max(750, Math.min(9000, this.orbit.radius * factor));
+      this.orbit.radius = Math.max(660, Math.min(9000, this.orbit.radius * factor));
       this._applyCamera();
       return;
     }
@@ -252,11 +252,20 @@ export class Renderer {
 
   // -------------------------------------------------------------- frame
 
+  /** In orbit mode, cap a sprite at ~5% of the viewport so a close flyby
+   *  neither fills the screen nor pops out on the near plane. */
+  _capSize(s) {
+    if (!this._capSizes) return s.size;
+    const p = this.camera.position;
+    const d = Math.hypot(s.x - p.x, s.y - p.y, (s.z ?? 0) - p.z);
+    return Math.min(s.size, 0.05 * 2 * d * HALF);
+  }
+
   _placeRing(ring, state, scale = 1.25) {
     ring.visible = true;
     ring.position.set(state.x, state.y, state.z ?? 0);
     ring.quaternion.copy(this.camera.quaternion);
-    ring.scale.setScalar(state.size * scale);
+    ring.scale.setScalar(this._capSize(state) * scale);
   }
 
   draw(animItems, { hoverId, selectId, pulseId, now }) {
@@ -290,6 +299,8 @@ export class Renderer {
       this._applyCamera();
     }
 
+    this._capSizes = this.mode === "orbit" || this.camTween?.toMode === "orbit";
+
     // billboard: same camera-facing rotation for every instance
     this._rotM.makeRotationFromQuaternion(this.camera.quaternion);
     const e = this._rotM.elements;
@@ -297,7 +308,7 @@ export class Renderer {
     for (const [id, { mesh, index }] of this.slots) {
       const s = animItems.get(id);
       if (s) {
-        const k = s.size;
+        const k = this._capSize(s);
         this._mat4.set(
           e[0] * k, e[4] * k, e[8] * k, s.x,
           e[1] * k, e[5] * k, e[9] * k, s.y,
