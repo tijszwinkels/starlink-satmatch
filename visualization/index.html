@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>starlink-satmatch · murmuration</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #ffffff;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --hairline: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--page); color: var(--ink-2);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  #app { height: calc(100% - 22px); display: flex; flex-direction: column; }
+  #meta {
+    height: 22px; padding: 3px 10px; font-size: 11px; color: var(--muted);
+    border-top: 1px solid var(--hairline); white-space: nowrap; overflow: hidden;
+  }
+
+  .mm-root { display: flex; flex-direction: column; min-height: 0; }
+  .mm-topbar {
+    display: flex; align-items: center; gap: 14px; padding: 8px 12px;
+    border-bottom: 1px solid var(--hairline); flex-wrap: wrap;
+  }
+  .mm-views { display: flex; border: 1px solid var(--hairline); border-radius: 6px; overflow: hidden; }
+  .mm-viewbtn {
+    background: none; border: none; color: var(--ink-2); padding: 4px 12px;
+    cursor: pointer; font: inherit;
+  }
+  .mm-viewbtn.active { background: var(--accent); color: #fff; }
+  .mm-ctl { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .mm-ctl select {
+    background: var(--surface); color: var(--ink-2); border: 1px solid var(--hairline);
+    border-radius: 5px; padding: 3px 6px; font: inherit;
+  }
+  .mm-dirbtn, .mm-chip, .mm-crumb {
+    background: var(--surface); color: var(--ink-2); border: 1px solid var(--hairline);
+    border-radius: 5px; padding: 3px 8px; cursor: pointer; font: inherit;
+  }
+  .mm-colorby { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .mm-ctl-label { color: var(--muted); }
+  .mm-chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; }
+  .mm-chip.active { border-color: var(--accent); color: var(--ink); }
+  .mm-chip-swatch { width: 22px; height: 8px; border-radius: 4px; display: inline-block; }
+  .mm-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .mm-main { flex: 1; display: flex; min-height: 0; }
+  .mm-filterpane {
+    width: 230px; overflow-y: auto; padding: 10px;
+    border-right: 1px solid var(--hairline);
+  }
+  .mm-search {
+    width: 100%; background: var(--surface); border: 1px solid var(--hairline);
+    color: var(--ink); border-radius: 6px; padding: 5px 8px; font: inherit;
+    margin-bottom: 10px;
+  }
+  .mm-facet { border-bottom: 1px solid var(--hairline); padding: 4px 0; }
+  .mm-facet summary { cursor: pointer; color: var(--ink-2); padding: 4px 0; user-select: none; }
+  .mm-facet-body { padding: 2px 0 8px; }
+  .mm-option { display: flex; align-items: center; gap: 7px; padding: 2px 0; cursor: pointer; }
+  .mm-option-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mm-option-count { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .mm-range input[type=range] { width: 100%; margin: 2px 0; accent-color: var(--accent); }
+  .mm-range-readout { color: var(--muted); font-size: 11px; }
+
+  .mm-canvas-wrap { flex: 1; position: relative; min-width: 0; }
+  .mm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .mm-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  .mm-bucket-label {
+    position: absolute; left: 0; top: 0; color: var(--ink-2); font-size: 12px;
+    white-space: nowrap; text-shadow: 0 1px 3px #000;
+  }
+  .mm-bucket-count { color: var(--muted); font-size: 10px; }
+  .mm-breadcrumbs {
+    position: absolute; top: 8px; left: 10px; right: 10px; display: flex;
+    gap: 6px; flex-wrap: wrap; pointer-events: none;
+  }
+  .mm-crumb { pointer-events: auto; font-size: 11px; border-radius: 999px; }
+  .mm-crumb-clear { color: var(--muted); }
+  .mm-tooltip {
+    position: absolute; pointer-events: none; background: rgba(13,13,13,0.92);
+    border: 1px solid var(--hairline); border-radius: 6px; padding: 5px 9px;
+    font-size: 12px; color: var(--ink); white-space: nowrap; z-index: 3;
+  }
+
+  .mm-rightpane {
+    width: 250px; overflow-y: auto; padding: 10px;
+    border-left: 1px solid var(--hairline);
+  }
+  .mm-legend-block { margin-bottom: 14px; }
+  .mm-legend-title { color: var(--muted); margin-bottom: 4px; }
+  .mm-legend-bar { height: 10px; border-radius: 5px; }
+  .mm-legend-minmax { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+  .mm-legend-row { display: flex; align-items: center; gap: 7px; padding: 1px 0; }
+  .mm-swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .mm-detail-row { display: flex; gap: 8px; padding: 4px 6px; border-radius: 4px; }
+  .mm-detail-row:nth-child(odd) { background: var(--surface); }
+  .mm-detail-label { width: 72px; color: var(--muted); flex-shrink: 0; }
+  .mm-detail-value { color: var(--ink); overflow-wrap: anywhere; }
+  .mm-detail-empty { color: var(--muted); padding: 10px 0; }
+  .mm-colorpop {
+    position: fixed; z-index: 10; background: var(--surface);
+    border: 1px solid var(--hairline); border-radius: 8px; padding: 8px 10px;
+    display: flex; gap: 8px; align-items: center;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  }
+  .mm-colorpop-label { color: var(--muted); font-size: 11px; }
+  .mm-colorpop input[type=color] {
+    width: 36px; height: 26px; border: none; background: none; padding: 0;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="meta">loading…</div>
+  <script type="module" src="app/main.js"></script>
+</body>
+</html>

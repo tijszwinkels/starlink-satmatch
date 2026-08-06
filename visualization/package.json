@@ -1,0 +1,9 @@
+{
+  "name": "murmuration",
+  "private": true,
+  "type": "module",
+  "description": "Pivot-style faceted visualization of the starlink-satmatch satellite history",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
