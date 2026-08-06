@@ -36,6 +36,15 @@ def load_raw_tle_lines(catalog_used):
     return out
 
 
+def ensure_history_symlink():
+    """Expose ../sat_history.json inside visualization/ so the page can poll
+    live per-satellite history while --dwells runs (http.server follows it)."""
+    link = Path(__file__).resolve().parent / "sat_history.json"
+    if not link.is_symlink() and not link.exists():
+        link.symlink_to("../sat_history.json")
+        logging.info("created symlink %s -> ../sat_history.json", link)
+
+
 def load_history():
     path = SATMATCH / "sat_history.json"
     if not path.exists():
@@ -102,6 +111,7 @@ def export(out_path, offline=False):
     tmp = out_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(doc, separators=(",", ":")))
     tmp.replace(out_path)
+    ensure_history_symlink()
     logging.info("wrote %s: %d satellites (%d with history), last connected %s",
                  out_path, doc["count"], doc["connected_count"],
                  last_connected[1]["name"] if last_connected else "n/a")

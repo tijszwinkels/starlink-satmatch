@@ -300,8 +300,12 @@ export class Murmuration {
   /** App API: mark one item as "live" (pulsing ring), e.g. last connected. */
   setPulse(id) { this.state.pulseId = id; }
 
-  /** App API: re-run the pipeline after external item mutations. */
-  refresh() { this.update(); }
+  /** App API: re-run the pipeline after external item mutations.
+   *  Color extents are recomputed — live data can grow past cached ranges. */
+  refresh() {
+    this._extents.clear();
+    this.update();
+  }
 
   /** Replace a facet's gradient endpoints (from the color editor). */
   setColorStops(facetId, stops) {

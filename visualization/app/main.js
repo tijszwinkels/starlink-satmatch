@@ -264,6 +264,38 @@ async function boot() {
   }
   setInterval(pollCurrent, 5000);
   pollCurrent();
+
+  // Live history: satmatch rewrites sat_history.json atomically on every
+  // dwell close; merge it in so dwells/slots/bytes/last-seen update while
+  // it runs (the exporter symlinks the file into this folder).
+  const byNorad = new Map(items.map(it => [it.norad, it]));
+  let lastHistoryText = null;
+  async function pollHistory() {
+    let text;
+    try {
+      const res = await fetch("sat_history.json", { cache: "no-store" });
+      if (!res.ok) return;
+      text = await res.text();
+    } catch { return; }
+    if (text === lastHistoryText) return;
+    lastHistoryText = text;
+    let changed = false;
+    for (const [norad, h] of Object.entries(JSON.parse(text))) {
+      const it = byNorad.get(+norad);
+      if (!it || it.dwells === h.dwells && it.up_bytes === h.up_bytes) continue;
+      it.dwells = h.dwells;
+      it.slots = h.slots;
+      it.seconds = h.seconds ?? it.seconds;
+      it.down_bytes = h.down_bytes;
+      it.up_bytes = h.up_bytes;
+      it.last_ms = Math.max(it.last_ms ?? 0, Date.parse(h.last_seen)) || it.last_ms;
+      it.ever = true;
+      changed = true;
+    }
+    if (changed) mm.refresh();
+  }
+  setInterval(pollHistory, 10000);
+  pollHistory();
 }
 
 boot().catch(err => {

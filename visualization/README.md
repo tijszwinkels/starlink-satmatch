@@ -33,11 +33,14 @@ Re-run it any time to refresh; `satellites.json` is gitignored (personal data).
   endpoint colors: **double-click a chip** to change them (persisted in
   localStorage). Default coloring: bright = connected, dim = never connected,
   green pulse = the satellite you're on right now.
-- **Live current satellite** — while `satmatch.py identify --dwells` runs it
-  publishes `visualization/current.json` on every confident observation; the
-  page polls it every 5 s, moves the green pulse on handovers and shows
-  `● live: <name>` in the status bar (falls back to the export's
-  last-connected when the file is absent or stale).
+- **Live** — while `satmatch.py identify --dwells` runs, the page follows it:
+  `current.json` (published on every confident observation, polled every 5 s)
+  moves the green pulse across handovers and shows `● live: <name>` in the
+  status bar; the previously-connected satellite trails in lighter green; and
+  `sat_history.json` (symlinked into this folder, polled every 10 s) merges
+  each closed dwell in, so dwell counts, transfer volumes, last-seen times,
+  facet histograms and colors all update as you watch. A never-seen satellite
+  brightens the moment it first picks you up.
 - **Icons** — Gen1 (single solar sail, vertical) vs V2 Mini (two wings,
   horizontal); click for the detail pane, hover for a tooltip; wheel to zoom,
   drag to pan.
@@ -84,5 +87,3 @@ Tests: `node --test test/` (pure modules only).
 - Orbital view (satellites circling a globe in the same instanced canvas,
   flying into the data views on switch) — the renderer was chosen for this.
 - Semantic-zoom cards (full metadata card when zoomed close, Pivot-style).
-- Live refresh of the *history* facets (dwells/slots/bytes still need a
-  re-export; only the current satellite updates live).
