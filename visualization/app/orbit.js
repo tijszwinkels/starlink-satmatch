@@ -27,6 +27,8 @@ export function createOrbitView(items, observer) {
   let fade = null;                 // {from, to, start} for globe opacity
   let repropQueue = [];
   let tiles = null, attributionEl = null;
+  let trailSolid = null, trailDashed = null;
+  let trailFor = null, trailBuiltAt = 0;
 
   // lifted just above the tile-patch shell so it never gets draped over
   const dishWorld = observer ? (() => {
@@ -59,6 +61,29 @@ export function createOrbitView(items, observer) {
     }
     inited = true;
     console.log(`orbit: ${sats.size} satrecs initialized in ${Math.round(performance.now() - t0)} ms`);
+  }
+
+  /** Selected satellite's actual Earth-relative track: one orbital period
+   *  into the past (solid) and one ahead (dashed). Sampled with per-sample
+   *  gmst, so Earth rotation shows as the classic westward drift. */
+  function buildTrail(entry) {
+    const periodMs = 2 * Math.PI / entry.satrec.no * 60e3;   // satrec.no: rad/min
+    const N = 160;
+    const nowMs = Date.now();
+    const past = [], future = [];
+    for (let i = -N; i <= N; i++) {
+      const t = nowMs + i / N * periodMs;
+      const pv = satellite.propagate(entry.satrec, new Date(t));
+      if (!pv?.position) continue;
+      const w = toWorld(satellite.eciToEcf(pv.position,
+        satellite.gstime(new Date(t))));
+      (i <= 0 ? past : future).push(new THREE.Vector3(w.x, w.y, w.z));
+    }
+    trailSolid.geometry.dispose();
+    trailSolid.geometry = new THREE.BufferGeometry().setFromPoints(past);
+    trailDashed.geometry.dispose();
+    trailDashed.geometry = new THREE.BufferGeometry().setFromPoints(future);
+    trailDashed.computeLineDistances();
   }
 
   function worldAt(entry, nowMs, gmst) {
@@ -148,6 +173,20 @@ export function createOrbitView(items, observer) {
         lineMesh.visible = false;
         group.add(lineMesh);
       }
+      trailSolid = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({
+          color: 0xf2c14e, transparent: true, opacity: 0.9,
+        }));
+      trailDashed = new THREE.Line(
+        new THREE.BufferGeometry(),
+        new THREE.LineDashedMaterial({
+          color: 0xf2c14e, transparent: true, opacity: 0.9,
+          dashSize: 9, gapSize: 7,
+        }));
+      trailSolid.visible = trailDashed.visible = false;
+      group.add(trailSolid, trailDashed);
+
       group.visible = false;
       scene.add(group);
     },
@@ -161,7 +200,7 @@ export function createOrbitView(items, observer) {
     },
 
     /** Per-frame: fade globe; when active, drift satellites and track line. */
-    tick(nowMs, anim, currentId, active, camPos) {
+    tick(nowMs, anim, currentId, active, camPos, selectedId = null) {
       if (!inited || !group) return;
 
       if (fade) {
@@ -212,6 +251,20 @@ export function createOrbitView(items, observer) {
         if (!entry) continue;
         const w = worldAt(entry, t, gmst);
         s.x = w.x; s.y = w.y; s.z = w.z;
+      }
+
+      // orbit trail of the selected satellite (rebuilt as "now" drifts)
+      const sel = selectedId !== null ? sats.get(selectedId) : null;
+      if (sel && trailSolid) {
+        if (trailFor !== selectedId || Date.now() - trailBuiltAt > 10000) {
+          trailFor = selectedId;
+          trailBuiltAt = Date.now();
+          buildTrail(sel);
+        }
+        trailSolid.visible = trailDashed.visible = true;
+      } else if (trailSolid) {
+        trailSolid.visible = trailDashed.visible = false;
+        trailFor = null;
       }
 
       if (lineMesh) {
