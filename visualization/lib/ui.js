@@ -2,7 +2,7 @@
 // color-by chips), left filter pane, breadcrumbs, right legend + detail pane,
 // bucket labels, tooltip. All plain DOM; murmuration.js supplies callbacks.
 
-import { formatValue, extent, normalize } from "./facets.js";
+import { facetValue, formatValue, extent } from "./facets.js";
 import { rgbToHex } from "./color.js";
 import { humanDuration } from "./filters.js";
 
@@ -232,6 +232,8 @@ export class UI {
     for (const ms of facet.agoPresets) mk(`last ${humanDuration(ms)}`, ms);
   }
 
+  /** Numeric/datetime filter: a mini histogram of the value distribution
+   *  with min/max sliders below it; bars inside the selection highlight. */
   _rangeSlider(body, facet, desc, items) {
     const ext = extent(facet, items);
     if (!ext) { body.append(el("div", "mm-option-label", "no data")); return; }
@@ -239,6 +241,39 @@ export class UI {
     const toT = v => normalizeLinear(facet, v, lo, hi);
     const fromT = t => denormalizeLinear(facet, t, lo, hi);
     const cur = { min: desc?.min ?? lo, max: desc?.max ?? hi };
+
+    // one bin per integer for small integer ranges (dwells, slots), else 28
+    const integer = Number.isInteger(lo) && Number.isInteger(hi)
+      && facet.scale !== "log" && hi - lo + 1 <= 28;
+    const BINS = integer ? hi - lo + 1 : 28;
+    const counts = new Array(BINS).fill(0);
+    for (const item of items) {
+      const v = facetValue(facet, item);
+      if (v === null) continue;
+      counts[Math.min(BINS - 1, Math.floor(toT(v) * BINS))]++;
+    }
+    const maxCount = Math.max(...counts, 1);
+
+    const W = 220, HGT = 40, dpr = devicePixelRatio || 1;
+    const canvas = document.createElement("canvas");
+    canvas.className = "mm-histo";
+    canvas.width = W * dpr; canvas.height = HGT * dpr;
+    const ctx = canvas.getContext("2d");
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const [tLo, tHi] = [toT(cur.min), toT(cur.max)];
+      const barW = canvas.width / BINS;
+      counts.forEach((c, i) => {
+        if (!c) return;
+        const mid = (i + 0.5) / BINS;
+        // sqrt scale so one dominant bin doesn't flatten the rest
+        const h = Math.max(2 * dpr, Math.sqrt(c / maxCount) * canvas.height);
+        ctx.fillStyle = mid >= tLo && mid <= tHi ? "#3987e5" : "#3f3f3d";
+        ctx.fillRect(i * barW + 0.5 * dpr, canvas.height - h,
+          barW - 1 * dpr, h);
+      });
+    };
+    draw();
 
     const wrap = el("div", "mm-range");
     const readout = el("div", "mm-range-readout");
@@ -251,13 +286,14 @@ export class UI {
         cur[which] = fromT(+s.value / 1000);
         if (cur.min > cur.max) [cur.min, cur.max] = [cur.max, cur.min];
         readout.textContent = `${formatValue(facet, cur.min)} – ${formatValue(facet, cur.max)}`;
+        draw();
       };
       s.onchange = () => this.cb.onRangeFilter(facet.id,
         cur.min <= lo && cur.max >= hi ? null : { min: cur.min, max: cur.max });
       return s;
     });
     readout.textContent = `${formatValue(facet, cur.min)} – ${formatValue(facet, cur.max)}`;
-    wrap.append(...sliders, readout);
+    wrap.append(canvas, ...sliders, readout);
     body.append(wrap);
   }
 

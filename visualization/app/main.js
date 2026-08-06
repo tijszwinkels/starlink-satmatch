@@ -12,6 +12,7 @@ const HUE = {
 };
 const DIM = [0.29, 0.29, 0.28];       // never connected
 const BRIGHT = [0.85, 0.84, 0.81];    // connected
+const PREV_GREEN = "#7dd87d";         // previously-connected satellite
 
 // Default two-hue gradient endpoints (low -> high), user-editable by
 // double-clicking a color chip; overrides persist in localStorage.
@@ -172,7 +173,8 @@ function detailRows(s) {
   } else {
     rows.push(["history", "never connected"]);
   }
-  if (s.is_last) rows.push(["●", "most recently connected satellite"]);
+  if (s.is_last) rows.push(["●", "currently / most recently connected"]);
+  if (s.is_prev) rows.push(["●", "previously connected satellite"]);
   return rows;
 }
 
@@ -185,7 +187,13 @@ async function boot() {
     last_ms: s.last_seen ? Date.parse(s.last_seen) : null,
     ever: s.dwells > 0,
     is_last: s.norad === doc.last_connected_norad,
+    is_prev: false,
   }));
+  // previous satellite: freshest last_seen that isn't the current one
+  const prevCandidate = items
+    .filter(s => s.last_ms !== null && !s.is_last)
+    .reduce((a, b) => (a && a.last_ms > b.last_ms ? a : b), null);
+  if (prevCandidate) prevCandidate.is_prev = true;
 
   const mm = new Murmuration({
     container: document.getElementById("app"),
@@ -199,7 +207,9 @@ async function boot() {
       (s.ever ? ` · ${s.dwells} dwell${s.dwells === 1 ? "" : "s"} · ↓${fmtBytes(s.down_bytes)}`
         : " · never connected"),
     detailRows,
-    baseColor: s => s.is_last ? hexToRgb(HUE.green) : s.ever ? BRIGHT : DIM,
+    baseColor: s => s.is_last ? hexToRgb(HUE.green)
+      : s.is_prev ? hexToRgb(PREV_GREEN)
+      : s.ever ? BRIGHT : DIM,
     defaults: { view: "grid", sortId: "launched", bucketId: "type" },
     onColorStops: (id, stops) => {
       savedStops[id] = stops;
@@ -231,10 +241,25 @@ async function boot() {
       : ` · last seen: ${cur.name} (${cur.updated.slice(11, 16)} UTC)`;
     liveSpan.style.color = fresh ? "#0ca30c" : "";
     if (cur.norad !== currentNorad) {
+      const now = Date.now();
+      for (const it of items) {
+        if (it.norad === currentNorad) {          // outgoing -> previous
+          it.is_last = false;
+          it.is_prev = true;
+          it.last_ms = now;
+        } else if (it.norad === cur.norad) {      // incoming -> current
+          it.is_last = true;
+          it.is_prev = false;
+          it.ever = true;                         // connected right now
+          it.last_ms = now;
+        } else {
+          it.is_last = false;
+          it.is_prev = false;
+        }
+      }
       currentNorad = cur.norad;
-      for (const it of items) it.is_last = it.norad === cur.norad;
       mm.setPulse(cur.norad);
-      mm.refresh();       // recolor + update "current satellite" facet
+      mm.refresh();       // recolor + refresh facet counts live
     }
   }
   setInterval(pollCurrent, 5000);
