@@ -251,7 +251,8 @@ export class UI {
     for (const item of items) {
       const v = facetValue(facet, item);
       if (v === null) continue;
-      counts[Math.min(BINS - 1, Math.floor(toT(v) * BINS))]++;
+      // values below the scale start (zeros on a log facet) pile into bin 0
+      counts[Math.max(0, Math.min(BINS - 1, Math.floor(toT(v) * BINS)))]++;
     }
     const maxCount = Math.max(...counts, 1);
 

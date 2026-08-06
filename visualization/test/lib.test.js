@@ -56,6 +56,24 @@ test("extent skips missing values", () => {
   assert.equal(extent(numFacet, [{ n: null }]), null);
 });
 
+test("log extent anchors at the smallest positive value", () => {
+  assert.deepEqual(extent(logFacet, [{ b: 0 }, { b: 1e5 }, { b: 1e9 }]), [1e5, 1e9]);
+  // ramp spread: with the positive anchor, 1 MB sits low, 100 MB high
+  const ext = [1e5, 341e6];
+  assert.ok(normalize(logFacet, 1e6, ext) < 0.35);
+  assert.ok(normalize(logFacet, 1e8, ext) > 0.8);
+});
+
+test("log buckets give zeros their own bucket", () => {
+  const items = [{ b: 0 }, { b: 0 }, { b: 5e5 }, { b: 2e6 }];
+  const buckets = makeBuckets(logFacet, items);
+  assert.equal(buckets[0].label, "0");
+  const groups = groupByBuckets(logFacet, buckets, items);
+  const total = groups.reduce((a, g) => a + g.items.length, 0);
+  assert.equal(total, 4, "no satellite falls out of the graph");
+  assert.equal(groups[0].items.length, 2);
+});
+
 test("normalize linear, log, invert", () => {
   assert.equal(normalize(numFacet, 5, [0, 10]), 0.5);
   assert.equal(normalize({ ...numFacet, invertColor: true }, 10, [0, 10]), 0);
