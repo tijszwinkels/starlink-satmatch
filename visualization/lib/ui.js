@@ -14,9 +14,10 @@ function el(tag, className, text) {
 }
 
 export class UI {
-  constructor(container, facets, callbacks) {
+  constructor(container, facets, callbacks, views = ["grid", "graph"]) {
     this.facets = facets;
     this.cb = callbacks;
+    this.views = views;
     container.classList.add("mm-root");
 
     this.topbar = el("div", "mm-topbar");
@@ -48,8 +49,8 @@ export class UI {
   _buildTopbar() {
     this.viewButtons = {};
     const views = el("div", "mm-views");
-    for (const v of ["grid", "graph"]) {
-      const b = el("button", "mm-viewbtn", v === "grid" ? "Grid" : "Graph");
+    for (const v of this.views) {
+      const b = el("button", "mm-viewbtn", v[0].toUpperCase() + v.slice(1));
       b.onclick = () => this.cb.onView(v);
       views.append(b);
       this.viewButtons[v] = b;

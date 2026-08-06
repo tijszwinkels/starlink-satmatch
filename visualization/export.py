@@ -99,10 +99,16 @@ def export(out_path, offline=False):
             "tle": list(raw_tle.get(sat.norad, ())) or None,
         })
 
+    observer = None
+    loc_path = SATMATCH / "location.json"
+    if loc_path.exists():
+        observer = json.loads(loc_path.read_text())
+
     doc = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "catalog": catalog_used,
         "catalog_age_hours": round(age_h, 1),
+        "observer": observer,
         "last_connected_norad": int(last_connected[0]) if last_connected else None,
         "count": len(records),
         "connected_count": sum(1 for r in records if r["dwells"]),

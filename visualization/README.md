@@ -33,6 +33,13 @@ Re-run it any time to refresh; `satellites.json` is gitignored (personal data).
   endpoint colors: **double-click a chip** to change them (persisted in
   localStorage). Default coloring: bright = connected, dim = never connected,
   green pulse = the satellite you're on right now.
+- **Orbit view** — the whole constellation at its real positions (SGP4 from
+  the exported TLEs, Earth-fixed frame) around a night-lights globe, drifting
+  in real time. Switching views flies the camera and every satellite between
+  orbit and the data layouts in one motion. Colors, filters, selection and
+  the current/previous markers all work identically here; a green line runs
+  from the dish's position on the ground to the satellite currently serving
+  it. Drag to rotate, wheel to zoom.
 - **Live** — while `satmatch.py identify --dwells` runs, the page follows it:
   `current.json` (published on every confident observation, polled every 5 s)
   moves the green pulse across handovers and shows `● live: <name>` in the
@@ -84,6 +91,6 @@ Tests: `node --test test/` (pure modules only).
 
 ## Not yet built
 
-- Orbital view (satellites circling a globe in the same instanced canvas,
-  flying into the data views on switch) — the renderer was chosen for this.
 - Semantic-zoom cards (full metadata card when zoomed close, Pivot-style).
+- Time-lapse mode for the orbit view (satellites move in real time, which
+  is honest but slow — a 60× toggle would show the orbital mechanics).

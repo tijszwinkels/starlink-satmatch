@@ -29,7 +29,7 @@ export class Animator {
   /** Ensure an item exists, spawning it at the given state if new. */
   spawn(id, init) {
     let s = this.items.get(id);
-    if (!s) { s = { ...init, tweens: {} }; this.items.set(id, s); }
+    if (!s) { s = { z: 0, ...init, tweens: {} }; this.items.set(id, s); }
     return s;
   }
 
@@ -108,14 +108,14 @@ export function choreograph(anim, prevVisible, nextPositions, {
   }
   for (const id of stayers) {
     const p = nextPositions.get(id);
-    anim.tween(id, { x: p.x, y: p.y, size: sizeOf(p) },
+    anim.tween(id, { x: p.x, y: p.y, z: p.z ?? 0, size: sizeOf(p) },
       { now, delay, duration: timing.moveMs });
   }
   for (const id of enterers) {
     const p = nextPositions.get(id);
     const from = radialExitPoint(p, exitRadius);
-    anim.spawn(id, { x: from.x, y: from.y, size: sizeOf(p), r: 1, g: 1, b: 1 });
-    anim.tween(id, { x: p.x, y: p.y, size: sizeOf(p) },
+    anim.spawn(id, { x: from.x, y: from.y, z: p.z ?? 0, size: sizeOf(p), r: 1, g: 1, b: 1 });
+    anim.tween(id, { x: p.x, y: p.y, z: p.z ?? 0, size: sizeOf(p) },
       { now, delay, duration: timing.moveMs });
   }
   return { leavers, stayers, enterers };

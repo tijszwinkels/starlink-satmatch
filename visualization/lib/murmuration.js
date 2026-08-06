@@ -47,7 +47,8 @@ export class Murmuration {
     this._extents = new Map();
     this._categoryColors = new Map();
 
-    this.ui = new UI(opts.container, opts.facets, this._callbacks());
+    this.ui = new UI(opts.container, opts.facets, this._callbacks(),
+      ["grid", "graph", ...(opts.orbitView ? ["orbit"] : [])]);
     const variantCounts = new Map();
     for (const item of this.items) {
       const v = opts.variantOf(item);
@@ -92,7 +93,17 @@ export class Murmuration {
       this.ui.canvas.clientWidth / Math.max(1, this.ui.canvas.clientHeight));
 
     let layout;
-    if (s.view === "graph") {
+    if (s.view === "orbit" && this.opts.orbitView) {
+      if (!this._orbitSetup) {
+        this.opts.orbitView.setup(this.renderer.scene);
+        Object.assign(this.renderer.orbit, this.opts.orbitView.camera?.() ?? {});
+        this._orbitSetup = true;
+      }
+      layout = {
+        positions: this.opts.orbitView.positions(visible, now),
+        bounds: null, labels: [], columns: [],
+      };
+    } else if (s.view === "graph") {
       const bucketFacet = this.byId.get(s.bucketId);
       const buckets = makeBuckets(bucketFacet, visible);
       const groups = groupByBuckets(bucketFacet, buckets, visible)
@@ -105,17 +116,22 @@ export class Murmuration {
     this.renderer.setColumns(layout.columns);
 
     const b = layout.bounds;
-    const exitRadius = Math.hypot(b.maxX - b.minX, b.maxY - b.minY) * 0.8;
+    const exitRadius = b
+      ? Math.hypot(b.maxX - b.minX, b.maxY - b.minY) * 0.8 : 3000;
     const prevVisible = new Set(this.anim.items.keys());
     const { leavers } = choreograph(this.anim, prevVisible, layout.positions, {
       now, exitRadius,
       timing: animate ? TIMING : { ...TIMING, exitMs: 1, moveMs: 1, staggerMs: 0 },
     });
-    this.renderer.fitBounds(b, {
-      animate,
-      delay: animate && leavers.length ? TIMING.staggerMs : 0,
-      duration: TIMING.moveMs, now,
-    });
+    const delay = animate && leavers.length ? TIMING.staggerMs : 0;
+    if (s.view === "orbit") {
+      this.renderer.enterOrbit({ delay, duration: TIMING.moveMs, now });
+      if (this._shownView !== "orbit") this.opts.orbitView.enter();
+    } else {
+      this.renderer.fitBounds(b, { animate, delay, duration: TIMING.moveMs, now });
+      if (this._shownView === "orbit") this.opts.orbitView.leave();
+    }
+    this._shownView = s.view;
     recolor(this.anim, this._colorsFor(visible), {
       now, timing: animate ? TIMING : { ...TIMING, colorMs: 1 },
     });
@@ -210,8 +226,7 @@ export class Murmuration {
         }
         return;
       }
-      const w = this.renderer.unproject(e.clientX, e.clientY);
-      const id = this.layout ? hitTest(this.layout.positions, w.x, w.y) : null;
+      const id = this._pick(e);
       this.state.hoverId = id;
       c.style.cursor = id !== null ? "pointer" : "default";
       const item = id !== null ? this.itemById.get(id) : null;
@@ -219,8 +234,7 @@ export class Murmuration {
     });
     const up = e => {
       if (down && !dragged) {
-        const w = this.renderer.unproject(e.clientX, e.clientY);
-        const id = this.layout ? hitTest(this.layout.positions, w.x, w.y) : null;
+        const id = this._pick(e);
         this.state.selectId = id;
         const sel = id !== null ? this.itemById.get(id) : null;
         this.ui.renderDetail(sel, sel ? this.opts.detailRows(sel) : null);
@@ -236,11 +250,23 @@ export class Murmuration {
     c.addEventListener("pointerleave", () => this.ui.showTooltip(null));
   }
 
+  _pick(e) {
+    if (this.state.view === "orbit") {
+      return this.renderer.pickScreen(e.clientX, e.clientY, this.anim.items);
+    }
+    const w = this.renderer.unproject(e.clientX, e.clientY);
+    return this.layout ? hitTest(this.layout.positions, w.x, w.y) : null;
+  }
+
   // ---------------------------------------------------------------- loop
 
   _loop() {
     const now = performance.now();
     this.anim.tick(now);
+    if (this._orbitSetup) {
+      this.opts.orbitView.tick(now, this.anim, this.state.pulseId,
+        this.state.view === "orbit");
+    }
     this.renderer.draw(this.anim.items, {
       hoverId: this.state.hoverId,
       selectId: this.state.selectId,
