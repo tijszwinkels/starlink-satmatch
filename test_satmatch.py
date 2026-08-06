@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for satmatch. Run: venv/bin/python satmatch/test_satmatch.py
+"""Tests for satmatch. Run: venv/bin/python test_satmatch.py
 
 Uses plain asserts + a tiny runner (no pytest dependency). The propagation
 oracle test and the end-to-end test need the cached TLE file and skyfield.
@@ -163,10 +163,12 @@ def test_end_to_end_synthetic():
         return
     t0 = datetime.now(timezone.utc)
     target = None
-    while target is None:  # scan forward until a satellite is in the cone
+    for _ in range(240):  # scan forward until a satellite is in the cone
         target = _pick_visible_sat(sats, t0)
-        if target is None:
-            t0 += timedelta(minutes=2)
+        if target is not None:
+            break
+        t0 += timedelta(minutes=2)
+    assert target is not None, "no satellite entered the test cone in 8 h"
     samples = _render_track(target, t0)
 
     points = extract_trail(samples)
@@ -530,6 +532,78 @@ def test_dwell_log_publishes_current_satellite():
         assert doc["norad"] == 222, doc
         assert doc["updated"] >= first_updated
         assert not path.with_suffix(".tmp").exists()   # atomic write cleaned up
+
+
+def test_dwell_same_slot_segments_count_one_slot():
+    # two confident segments for the same satellite within one slot (trail
+    # split by a sampling gap) must not report "confirmed in 2/1 slot(s)"
+    import contextlib
+    import io
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, t0, t1, eps):
+        s = Segment(points=[type("P", (), {"t": t0})(),
+                            type("P", (), {"t": t1})()])
+        s.candidates = [Candidate(name="STARLINK-A", norad=norad, eps_deg=eps,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    log = DwellLog(satcat=None, by_norad={})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        # both segments inside the slot [987, 1002)
+        log.observe([seg(111, 988.0, 992.0, eps=1.0),
+                     seg(111, 997.0, 1000.0, eps=2.0)])
+        log.close()
+    close_line = out.getvalue().splitlines()[1]
+    assert "confirmed in 1/1 slot(s)" in close_line, close_line
+    assert "mean ε 1.5°" in close_line, close_line  # per-segment mean
+
+
+def test_extract_trail_largest_cluster():
+    # two clusters lighting up in one interval: centroid of the larger wins
+    lit0 = np.zeros((GEOM.n_rows, GEOM.n_cols), dtype=bool)
+    lit1 = lit0.copy()
+    for c in (10, 11, 12):
+        lit1[10, c] = True          # 3-px cluster around (11, 10)
+    lit1[60, 60] = True             # far 1-px cluster
+    points = extract_trail([FakeSample(1000.0, lit0), FakeSample(1001.0, lit1)])
+    assert len(points) == 1, points
+    assert abs(points[0].x - 11.0) < 1e-9 and abs(points[0].y - 10.0) < 1e-9, \
+        (points[0].x, points[0].y)
+
+
+def test_load_catalogue_fallback(tmpdir="/tmp/satmatch-test-cache"):
+    # sup missing + offline -> falls back to the cached group file
+    import shutil
+    from pathlib import Path
+    src = tle.CACHE_DIR / "sup-starlink.tle"
+    if not src.exists():
+        print("  SKIP (no cached TLE file)")
+        return
+    tmp = Path(tmpdir)
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    lines = src.read_text().splitlines()[:6]  # two satellites are plenty
+    (tmp / "group-starlink.tle").write_text("\n".join(lines) + "\n")
+    orig = tle.CACHE_DIR
+    tle.CACHE_DIR = tmp
+    try:
+        sats, cat, age = tle.load_catalogue("sup", offline=True)
+        assert cat == "group", cat
+        assert len(sats) == 2, len(sats)
+        # and nothing at all -> a friendly RuntimeError, not a traceback
+        (tmp / "group-starlink.tle").unlink()
+        try:
+            tle.load_catalogue("sup", offline=True)
+            assert False, "expected RuntimeError"
+        except RuntimeError as e:
+            assert "without --offline" in str(e), e
+    finally:
+        tle.CACHE_DIR = orig
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():

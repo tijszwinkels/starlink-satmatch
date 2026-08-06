@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements.txt
+      # Catalogue-dependent tests self-skip without a TLE cache; geometry,
+      # propagation (gstime), dwell state machine, history and trail logic
+      # all run. No network calls are made during the suite.
+      - run: python test_satmatch.py
