@@ -265,7 +265,8 @@ export class Murmuration {
     this.anim.tick(now);
     if (this._orbitSetup) {
       this.opts.orbitView.tick(now, this.anim, this.state.pulseId,
-        this.state.view === "orbit", this.renderer.camera.position);
+        this.state.view === "orbit", this.renderer.camera.position,
+        this.state.selectId);
     }
     this.renderer.draw(this.anim.items, {
       hoverId: this.state.hoverId,
