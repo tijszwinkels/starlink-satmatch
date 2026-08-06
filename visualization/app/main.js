@@ -4,6 +4,7 @@ import { Murmuration } from "../lib/murmuration.js";
 import { makeTwoColorRamp, hexToRgb } from "../lib/color.js";
 import { humanDuration } from "../lib/filters.js";
 import { VARIANTS } from "./icons.js";
+import { createOrbitView } from "./orbit.js";
 
 // palette hues (dark-surface steps)
 const HUE = {
@@ -14,17 +15,19 @@ const DIM = [0.29, 0.29, 0.28];       // never connected
 const BRIGHT = [0.85, 0.84, 0.81];    // connected
 const PREV_GREEN = "#7dd87d";         // previously-connected satellite
 
-// Default two-hue gradient endpoints (low -> high), user-editable by
-// double-clicking a color chip; overrides persist in localStorage.
+// Default two-TONE gradient endpoints (low -> high): two clearly distinct
+// hues per facet, dark cool end -> bright warm end so magnitude still reads.
+// User-editable by double-clicking a color chip; overrides persist in
+// localStorage.
 const DEFAULT_STOPS = {
-  launched: ["#0d366b", "#55d6f5"],   // navy -> cyan
-  incl: ["#6b3305", "#f2c14e"],       // umber -> gold
-  alt: ["#5c1a2e", "#ff8fa3"],        // wine -> pink
-  dwells: ["#7c2d12", "#fdba74"],     // rust -> light orange
-  down: ["#1e1b4b", "#a5b4fc"],       // indigo -> periwinkle
-  up: ["#500f42", "#f0abfc"],         // plum -> orchid
-  total: ["#064e3b", "#6ee7b7"],      // forest -> mint
-  seen: ["#312e81", "#34d399"],       // indigo -> emerald (recent = bright)
+  launched: ["#0d366b", "#f2c14e"],   // navy -> gold
+  incl: ["#5b21b6", "#34d399"],       // violet -> emerald
+  alt: ["#1e6091", "#ff8fa3"],        // steel blue -> pink
+  dwells: ["#7c2d12", "#60d4fa"],     // rust -> sky
+  down: ["#312e81", "#fb923c"],       // indigo -> orange
+  up: ["#500f42", "#a3e635"],         // plum -> lime
+  total: ["#064e3b", "#f0abfc"],      // forest -> orchid
+  seen: ["#3b0764", "#4ade80"],       // deep purple -> green (recent = green)
   ever: ["#4a4a48", "#d8d7cf"],       // dim gray -> bright gray
 };
 const STORAGE_KEY = "murmuration.colorStops";
@@ -207,6 +210,7 @@ async function boot() {
       (s.ever ? ` · ${s.dwells} dwell${s.dwells === 1 ? "" : "s"} · ↓${fmtBytes(s.down_bytes)}`
         : " · never connected"),
     detailRows,
+    orbitView: createOrbitView(items, doc.observer),
     baseColor: s => s.is_last ? hexToRgb(HUE.green)
       : s.is_prev ? hexToRgb(PREV_GREEN)
       : s.ever ? BRIGHT : DIM,
@@ -217,6 +221,7 @@ async function boot() {
     },
   });
   mm.setPulse(doc.last_connected_norad);
+  window.mm = mm;   // console/debug handle
 
   const meta = document.getElementById("meta");
   meta.textContent =
