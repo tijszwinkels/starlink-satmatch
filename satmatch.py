@@ -50,6 +50,8 @@ SAMPLE_WINDOW = 13.5      # stop sampling this long after the boundary
 CONFIDENT_P = 0.75
 CONFIDENT_EPS = 3.0       # a lone bad match is not a confident match
 MAX_SLOT_FAILURES = 40    # consecutive gRPC failures before giving up (~10 min)
+MAX_DWELL_GAP_S = 90.0    # unconfirmed gap that force-closes a dwell: system
+                          # sleep or outage, not a normal idle stretch
 
 
 def is_confident(c):
@@ -200,6 +202,15 @@ class DwellLog:
             c = seg.candidates[0]
             if not is_confident(c):
                 continue
+            if self.cur is not None:
+                gap = seg.t_start - self.cur["last_seen"]
+                if gap > MAX_DWELL_GAP_S:
+                    # laptop sleep / outage: close honestly at the end of the
+                    # last confirmed slot; never bridge the gap — not even
+                    # for the same satellite (it may have come back around)
+                    self.close()
+                    print(f"(no confident ID for {fmt_duration(gap)} — "
+                          "system sleep or outage; dwell closed)")
             if self.cur and c.norad == self.cur["norad"]:
                 self.cur["last_seen"] = seg.t_end
                 self.cur["slot_set"].add(slot_index(seg.t_start))

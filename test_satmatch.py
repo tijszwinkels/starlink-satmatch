@@ -534,6 +534,50 @@ def test_dwell_log_publishes_current_satellite():
         assert not path.with_suffix(".tmp").exists()   # atomic write cleaned up
 
 
+def test_dwell_gap_closes_dwell():
+    # a long unconfirmed gap (system sleep, outage) must close the dwell at
+    # the end of its last confirmed slot — never span the gap, not even for
+    # the same satellite
+    import contextlib
+    import io
+    from matcher import Candidate
+    from satmatch import DwellLog
+
+    def seg(norad, name, ts):
+        s = Segment(points=[type("P", (), {"t": ts})(),
+                            type("P", (), {"t": ts + 13.0})()])
+        s.candidates = [Candidate(name=name, norad=norad, eps_deg=1.0,
+                                  bearing_diff_deg=0.0, likelihood=1.0,
+                                  el_deg=50.0, az_deg=100.0, range_km=600.0)]
+        return s
+
+    # same satellite reappears after a ~66-minute gap
+    log = DwellLog(satcat=None, by_norad={})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        log.observe([seg(111, "STARLINK-A", 1000.0)])
+        log.observe([seg(111, "STARLINK-A", 5000.0)])
+        log.close()
+    text = out.getvalue()
+    assert text.count("▶") == 2, text          # NOT one continued dwell
+    assert "system sleep or outage" in text, text
+    closes = [l for l in text.splitlines() if l.startswith("■")]
+    # first dwell ends at the boundary after its last evidence: [987, 1017]
+    assert "tracked 30 s" in closes[0], closes[0]
+
+    # different satellite after the gap: no midpoint split of the gap
+    log = DwellLog(satcat=None, by_norad={})
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        log.observe([seg(111, "STARLINK-A", 1000.0)])
+        log.observe([seg(222, "STARLINK-B", 5000.0)])
+        log.close()
+    closes = [l for l in out.getvalue().splitlines() if l.startswith("■")]
+    assert "tracked 30 s" in closes[0], closes[0]   # A: [987, 1017]
+    # B starts at its own slot boundary (4992), not back at the gap midpoint
+    assert "tracked 30 s" in closes[1], closes[1]   # [4992, 5022]
+
+
 def test_dwell_same_slot_segments_count_one_slot():
     # two confident segments for the same satellite within one slot (trail
     # split by a sampling gap) must not report "confirmed in 2/1 slot(s)"
