@@ -9,15 +9,23 @@ jump-cut. (A murmuration is a flock of starlings moving as one.)
 ## Run
 
 ```sh
-python3 visualization/export.py        # merge catalogue + history -> satellites.json
-cd visualization && python3 -m http.server 8642
-# open http://localhost:8642
+python3 visualization/serve.py         # serves http://localhost:8642
 ```
 
-`export.py` reuses the satmatch modules: TLE catalogue (orbit, raw TLE),
-SATCAT (launch date/site, status), `sat_history.json` (your dwells, slots,
-tracked time, transfer volumes, last-seen) and the hardware-type heuristic.
-Re-run it any time to refresh; `satellites.json` is gitignored (personal data).
+`serve.py` keeps the data fresh by itself: on startup — and every 30 minutes
+in the background — it re-runs the exporter whenever `satellites.json` is
+older than 24 h (`--max-age-hours` to change, `--offline` to never download).
+The export merges the satmatch data sources into one browser-friendly JSON:
+TLE catalogue (orbit + raw TLE lines for in-browser SGP4), SATCAT (launch
+date/site, status), `sat_history.json` (your dwells, slots, tracked time,
+transfer volumes, last-seen), the hardware-type heuristic and your dish
+position. It follows satmatch's own cache policy — TLEs refresh past 12 h,
+SATCAT past 7 days. History and the current satellite update live without
+it; reload the page after an export to pick up catalogue changes.
+
+It binds to localhost only (the data includes your location and usage
+history); `--bind 0.0.0.0` exposes it on the LAN. `export.py` remains
+runnable standalone; `satellites.json` is gitignored (personal data).
 
 ## What you can do
 
