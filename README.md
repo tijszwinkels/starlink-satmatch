@@ -24,6 +24,14 @@ constellation hand you between satellites every 15 seconds, see mid-slot
 beam switches when your link degrades, and learn how many megabytes each
 individual spacecraft carried for you.
 
+And everything the tool learns feeds a visualization:
+
+[![murmuration demo — click to play](docs/murmuration-demo-poster.png)](docs/murmuration-demo.mp4)
+
+*(Click for the 2-minute demo: filtering and bucketing the constellation,
+per-satellite gradient coloring, live traffic accumulating on the serving
+satellite, and the orbital view with the dish's tracking line.)*
+
 ## Why this exists (and what's new here)
 
 Estimating the serving satellite from the obstruction map was pioneered by
@@ -47,6 +55,42 @@ and adds two things:
    catalogue — a few minutes of observation pins the dish to ~10–20 km.
    The satellites tell you where you are. (The default search area covers
    Europe; elsewhere pass `--seed LAT,LON` or `--box LAT0,LAT1,LON0,LON1`.)
+
+## murmuration — the visualization
+
+`visualization/` holds **murmuration**, a faceted visualization of the
+whole catalogue plus your personal history, in the spirit of Microsoft
+Live Labs Pivot (2009): every satellite is an icon, and filtering,
+sorting, bucketing or re-coloring makes the flock *fly* to its new
+arrangement instead of jump-cutting.
+
+```sh
+python3 visualization/export.py        # merge catalogue + history -> satellites.json
+cd visualization && python3 -m http.server 8642
+# open http://localhost:8642
+```
+
+- **Orbit view** (the default, framed on your dish's location): all 10k+
+  satellites at their real SGP4 positions around a night-lights globe,
+  with NASA Black Marble tiles sharpening as you zoom, a tether line from
+  your dish to the serving satellite, and click-for-orbit-trails (past
+  solid, future dashed). Switching views flies the camera and every
+  satellite between orbit and the data layouts in one motion.
+- **Graph view**: Pivot's signature histogram, literally stacked out of
+  satellite icons — bucket by type, launch date, inclination, altitude,
+  dwells, data volume, last-connected…
+- **Live**: run `identify --dwells` alongside and the page tracks it —
+  the serving satellite pulses green and jumps across handovers within
+  seconds, the previous one trails in light green, and dwell stats,
+  filter histograms and gradients update as dwells close.
+- **Color**: toggle two-tone gradients per variable and blend several at
+  once (mixed in OKLab); double-click a chip to edit colors and log/linear
+  scaling.
+
+Details in [visualization/README.md](visualization/README.md). Your usage
+data (`satellites.json`, `current.json`, `sat_history.json`) stays local
+and gitignored. Vendored: three.js and satellite.js (MIT); night imagery
+courtesy NASA GIBS (attributed in-app).
 
 ## Install
 
