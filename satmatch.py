@@ -58,6 +58,22 @@ def is_confident(c):
     return c.eps_deg <= CONFIDENT_EPS and c.likelihood >= CONFIDENT_P
 
 
+def save_location(lat, lon, alt_m=100.0):
+    """Write location.json, backing up an existing different version first
+    (location.json.<UTC stamp>.bak — tiny files, kept indefinitely)."""
+    doc = json.dumps({"lat": round(lat, 4), "lon": round(lon, 4),
+                      "alt_m": alt_m})
+    if LOCATION_FILE.exists():
+        if LOCATION_FILE.read_text().strip() == doc:
+            print(f"{LOCATION_FILE.name} unchanged")
+            return
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        bak = LOCATION_FILE.with_name(f"location.json.{stamp}.bak")
+        LOCATION_FILE.rename(bak)
+        print(f"(previous location backed up to {bak.name})")
+    LOCATION_FILE.write_text(doc)
+
+
 def resolve_location(args, dish):
     if args.location:
         loc = parse_latlon(args.location)
@@ -77,8 +93,7 @@ def resolve_location(args, dish):
             "    (Settings -> Advanced -> Debug data -> allow access on local network)\n"
             "Matching needs the position to ~10 km; it is only used locally.")
     if args.save_location:
-        LOCATION_FILE.write_text(json.dumps(
-            {"lat": loc[0], "lon": loc[1], "alt_m": loc[2]}))
+        save_location(loc[0], loc[1], loc[2])
         print(f"Saved location to {LOCATION_FILE}")
     print(f"Observer: {loc[0]:.4f}, {loc[1]:.4f}, {loc[2]:.0f} m  [{source}]")
     return loc
@@ -634,8 +649,7 @@ def cmd_locate(args):
               f"{LOCATION_FILE.name}; try more slots, or --seed/--box if the "
               "search area was wrong")
     else:
-        LOCATION_FILE.write_text(json.dumps(
-            {"lat": round(lat, 4), "lon": round(lon, 4), "alt_m": 100.0}))
+        save_location(lat, lon)
         print(f"Saved to {LOCATION_FILE} — identify/fov will use it "
               "automatically")
 

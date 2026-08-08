@@ -165,7 +165,7 @@ machine; the only internet access is downloading public catalogues.
 | file | what | when |
 |---|---|---|
 | `tle_cache/` | CelesTrak GP data + SATCAT | TLEs ≤12 h old, SATCAT ≤7 d |
-| `location.json` | observer position | `locate` (automatic) / `--save-location` |
+| `location.json` | observer position (previous versions kept as `.bak`) | `locate` (automatic) / `--save-location` |
 | `sat_history.json` | lifetime per-satellite tally (dwells, slots, time, bytes) | each dwell close |
 | `dwells.jsonl` | append-only machine-readable dwell records | `--log-dwells` |
 

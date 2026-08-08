@@ -1,9 +1,11 @@
 __pycache__/
 tle_cache/
 location.json
+location.json.*.bak
 sat_history.json
 *.jsonl
 
 # visualization: generated data (contains personal usage history)
 visualization/satellites.json
 visualization/current.json
+visualization/demo/out/

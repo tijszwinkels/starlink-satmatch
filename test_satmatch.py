@@ -650,6 +650,34 @@ def test_load_catalogue_fallback(tmpdir="/tmp/satmatch-test-cache"):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_save_location_backs_up_previous():
+    import contextlib
+    import io
+    import json as jsonlib
+    import tempfile
+    from pathlib import Path
+    import satmatch
+
+    with tempfile.TemporaryDirectory() as tmp:
+        orig = satmatch.LOCATION_FILE
+        satmatch.LOCATION_FILE = Path(tmp) / "location.json"
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                satmatch.save_location(62.03, 7.07)      # first write: no backup
+                satmatch.save_location(62.03, 7.07)      # identical: no-op
+                satmatch.save_location(51.5, -0.1)       # different: backs up
+            baks = sorted(Path(tmp).glob("location.json.*.bak"))
+            assert len(baks) == 1, baks
+            old = jsonlib.loads(baks[0].read_text())
+            assert old["lat"] == 62.03, old
+            new = jsonlib.loads(satmatch.LOCATION_FILE.read_text())
+            assert new["lat"] == 51.5, new
+            assert "unchanged" in out.getvalue(), out.getvalue()
+            assert "backed up" in out.getvalue(), out.getvalue()
+        finally:
+            satmatch.LOCATION_FILE = orig
+
+
 def main():
     failures = 0
     for name, fn in sorted(globals().items()):
