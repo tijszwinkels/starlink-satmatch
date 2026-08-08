@@ -19,8 +19,8 @@ Usage examples:
     satmatch.py tle --refresh
 
 Location is taken from --location, else the dish (needs "allow access on
-local network" enabled in the Starlink app), else a previously
---save-location'd file.
+local network" enabled in the Starlink app), else location.json — written
+automatically by `locate`, or by --save-location.
 """
 
 import argparse
@@ -562,7 +562,8 @@ def cmd_fov(args):
 
 def cmd_locate(args):
     """Recover the dish location from observed beam tracks (useful when the
-    dish GPS is policy-blocked). Resets the obstruction map per slot."""
+    dish GPS is policy-blocked) and save it to location.json for the other
+    commands to use. Resets the obstruction map per slot."""
     import locate as locate_mod
     from matcher import TrailPoint
 
@@ -628,10 +629,15 @@ def cmd_locate(args):
           "uncertainty at 550 km)")
     for eps, name in per_segment:
         print(f"  segment matched {name:<17} ε={eps:4.1f}°")
-    if args.save_location:
+    if residual > 4.0:
+        print(f"Fit is poor (residual {residual:.1f}°) — NOT saving to "
+              f"{LOCATION_FILE.name}; try more slots, or --seed/--box if the "
+              "search area was wrong")
+    else:
         LOCATION_FILE.write_text(json.dumps(
             {"lat": round(lat, 4), "lon": round(lon, 4), "alt_m": 100.0}))
-        print(f"Saved to {LOCATION_FILE}")
+        print(f"Saved to {LOCATION_FILE} — identify/fov will use it "
+              "automatically")
 
 
 def cmd_tle(args):
@@ -701,7 +707,8 @@ def main():
     pf.set_defaults(func=cmd_fov)
 
     pl = sub.add_parser("locate", help="recover the dish position from beam "
-                                       "tracks (resets the obstruction map)")
+                                       "tracks and save it to location.json "
+                                       "(resets the obstruction map)")
     pl.add_argument("--slots", type=int, default=6,
                     help="slots of tracks to collect live")
     pl.add_argument("--from-log", default=None, metavar="FILE.jsonl",

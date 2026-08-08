@@ -118,8 +118,10 @@ venv/bin/python satmatch.py tle --refresh            # refresh the catalogue cac
 ```
 
 Observer location resolution order: `--location lat,lon[,alt_m]` → dish GPS
-(if enabled in the app) → saved `location.json` (written by
-`--save-location` or by `locate`). Matching needs the position to ~10 km.
+(if enabled in the app) → saved `location.json`. Running `locate` once
+writes `location.json` automatically (unless the fit is poor), so every
+later command just works; `--save-location` persists a location given on
+the command line the same way. Matching needs the position to ~10 km.
 
 `--satellite-info` adds launch date/site, age, hardware generation
 (heuristic — not published anywhere machine-readable), orbit from the
@@ -163,7 +165,7 @@ machine; the only internet access is downloading public catalogues.
 | file | what | when |
 |---|---|---|
 | `tle_cache/` | CelesTrak GP data + SATCAT | TLEs ≤12 h old, SATCAT ≤7 d |
-| `location.json` | observer position | `--save-location` / `locate` |
+| `location.json` | observer position | `locate` (automatic) / `--save-location` |
 | `sat_history.json` | lifetime per-satellite tally (dwells, slots, time, bytes) | each dwell close |
 | `dwells.jsonl` | append-only machine-readable dwell records | `--log-dwells` |
 
