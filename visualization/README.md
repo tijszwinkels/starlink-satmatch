@@ -1,15 +1,17 @@
-# murmuration — Pivot-style satellite visualization
+# Pivot-style satellite visualization
 
 A faceted visualization of the satmatch satellite history in the spirit of
 [Microsoft Live Labs Pivot](https://en.wikipedia.org/wiki/Microsoft_Live_Labs_Pivot)
 (2009): every satellite is an icon; filtering, sorting, bucketing and
 re-coloring make the whole flock *fly* to its new arrangement rather than
-jump-cut. (A murmuration is a flock of starlings moving as one.)
+jump-cut.
 
 ## Run
 
+From the repository root, using the project venv:
+
 ```sh
-python3 visualization/serve.py         # serves http://localhost:8642
+venv/bin/python visualization/serve.py    # serves http://localhost:8642
 ```
 
 `serve.py` keeps the data fresh by itself: on startup — and every 30 minutes
@@ -36,6 +38,9 @@ runnable standalone; `satellites.json` is gitignored (personal data).
 - **Filters** (left pane) — checkbox facets with live counts, numeric range
   sliders (log-scaled for bytes), "how long ago" presets for datetimes, name
   search. Active filters become removable breadcrumb chips.
+- **Collapsible side panes** — the chevron in each pane header folds it away
+  to a narrow labelled rail, giving the canvas the full width; the layout
+  reflows to fit. Collapsed state is remembered in localStorage.
 - **Color** (top bar) — toggle any combination of gradients; multiple active
   facets blend per-satellite in OKLab. Each gradient runs between two editable
   endpoint colors: **double-click a chip** to change them (persisted in
@@ -95,7 +100,7 @@ get(item), format?, scale?: 'log', filterable?, sortable?, bucketable?,
 colorable?, colorRamp?, invertColor?, agoPresets?, categoryColors?}` — see
 `app/main.js` for the full worked example.
 
-Tests: `node --test test/` (pure modules only).
+Tests: `node --test` (pure modules only).
 
 ## Not yet built
 

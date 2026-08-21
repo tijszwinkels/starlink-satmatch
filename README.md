@@ -26,7 +26,7 @@ individual spacecraft carried for you.
 
 And everything the tool learns feeds a visualization:
 
-[![murmuration demo — click to play](docs/murmuration-demo-poster.png)](docs/murmuration-demo.mp4)
+[![visualization demo — click to play](docs/murmuration-demo-poster.png)](docs/murmuration-demo.mp4)
 
 *(Click for the 2-minute demo: filtering and bucketing the constellation,
 per-satellite gradient coloring, live traffic accumulating on the serving
@@ -56,17 +56,15 @@ and adds two things:
    The satellites tell you where you are. (The default search area covers
    Europe; elsewhere pass `--seed LAT,LON` or `--box LAT0,LAT1,LON0,LON1`.)
 
-## murmuration — the visualization
+## The visualization
 
-`visualization/` holds **murmuration**, a faceted visualization of the
-whole catalogue plus your personal history, in the spirit of Microsoft
-Live Labs Pivot (2009): every satellite is an icon, and filtering,
-sorting, bucketing or re-coloring makes the flock *fly* to its new
-arrangement instead of jump-cutting.
+`visualization/` holds a faceted visualization of the whole catalogue plus
+your personal history, in the spirit of Microsoft Live Labs Pivot (2009):
+every satellite is an icon, and filtering, sorting, bucketing or re-coloring
+makes the flock *fly* to its new arrangement instead of jump-cutting.
 
 ```sh
-python3 visualization/export.py        # merge catalogue + history -> satellites.json
-cd visualization && python3 -m http.server 8642
+venv/bin/python visualization/serve.py    # exports data if stale, then serves
 # open http://localhost:8642
 ```
 
@@ -92,7 +90,7 @@ data (`satellites.json`, `current.json`, `sat_history.json`) stays local
 and gitignored. Vendored: three.js and satellite.js (MIT); night imagery
 courtesy NASA GIBS (attributed in-app).
 
-## Install
+## Getting started
 
 ```sh
 git clone https://github.com/tijszwinkels/starlink-satmatch
@@ -103,6 +101,54 @@ python3 -m venv venv && venv/bin/pip install -r requirements.txt
 You need LAN access to the dish (`192.168.100.1:9200`; in bypass mode,
 route the 192.168.100.0/24 subnet). Works with a plain consumer dish —
 developed against a Starlink Mini.
+
+**1. Tell it where you are.** Matching needs the observer position to about
+10 km. Use your real GPS position if you can get one — from your phone, or
+from the dish itself if "allow access on local network" is enabled in the
+Starlink app. It's the most accurate option and it takes seconds:
+
+```sh
+venv/bin/python satmatch.py --location 59.91,10.75 --save-location fov
+```
+
+`--location` and `--save-location` are shared options, so they go *before* the
+subcommand; `--save-location` writes the position to `location.json` once and
+the later commands pick it up. (`fov` is read-only — it prints which satellites
+are near the boresight right now, so it doubles as a check that the position
+and the dish connection are both good.)
+
+If dish GPS is policy-blocked and you have no other source, the dish can work
+out where it is from the satellites it tracks. `locate` grid-searches for the
+position that makes the observed beam tracks consistent with the catalogue and
+writes `location.json` itself:
+
+```sh
+venv/bin/python satmatch.py locate     # a few minutes of tracks -> ~10-20 km
+```
+
+That's accurate enough to identify satellites, but a real GPS fix is better —
+prefer it when you have one. (The default search area covers Europe; elsewhere
+pass `--seed LAT,LON` or `--box LAT0,LAT1,LON0,LON1`.)
+
+**2. Watch the handovers.**
+
+```sh
+venv/bin/python satmatch.py identify --dwells
+```
+
+**3. Bring up the visualization** in a second terminal, leaving `identify`
+running so the page follows it live:
+
+```sh
+venv/bin/python visualization/serve.py
+# open http://localhost:8642
+```
+
+`serve.py` is the only command you need for the page: it exports
+`satellites.json` when it's missing or stale, serves the page on localhost,
+and re-exports every 30 minutes. With `identify --dwells` running alongside,
+the serving satellite pulses green through each handover and dwell stats,
+histograms and colors update as you watch.
 
 ## Usage
 

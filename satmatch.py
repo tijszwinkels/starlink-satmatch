@@ -13,10 +13,13 @@ discards its learned obstruction history until it re-learns it. Fine for
 experiments, not great on a link you depend on.
 
 Usage examples:
-    satmatch.py identify --location 59.91,10.75
+    satmatch.py --location 59.91,10.75 identify
     satmatch.py identify --slots 4 --log slots.jsonl
     satmatch.py fov
     satmatch.py tle --refresh
+
+Options shared by every subcommand (--location, --save-location, --target,
+--catalog, --offline) go before the subcommand name.
 
 Location is taken from --location, else the dish (needs "allow access on
 local network" enabled in the Starlink app), else location.json — written
