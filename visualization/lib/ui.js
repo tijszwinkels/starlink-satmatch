@@ -24,10 +24,12 @@ export class UI {
     this.main = el("div", "mm-main");
     container.append(this.topbar, this.main);
 
-    this.filterPane = el("div", "mm-filterpane");
+    const filters = this._makePane("mm-filterpane", "Filters", "left");
+    const details = this._makePane("mm-rightpane", "Details", "right");
+    this.filterPane = filters.body;
+    this.rightPane = details.body;
     this.canvasWrap = el("div", "mm-canvas-wrap");
-    this.rightPane = el("div", "mm-rightpane");
-    this.main.append(this.filterPane, this.canvasWrap, this.rightPane);
+    this.main.append(filters.pane, this.canvasWrap, details.pane);
 
     this.canvas = el("canvas", "mm-canvas");
     this.labelLayer = el("div", "mm-labels");
@@ -42,6 +44,48 @@ export class UI {
 
     this._buildTopbar();
     this._buildFilterPane();
+  }
+
+  // --------------------------------------------------------- side panes
+
+  /**
+   * A side pane whose header collapses it to a narrow labelled rail.
+   * Returns {pane, body}: append content to `body`. The canvas ResizeObserver
+   * in murmuration.js picks up the width change and relayouts on its own.
+   * Collapsed state persists in localStorage, like the color settings.
+   */
+  _makePane(className, title, side) {
+    const pane = el("div", `mm-pane ${className}`);
+    const head = el("div", "mm-pane-head");
+    const label = el("span", "mm-pane-title", title);
+    const toggle = el("button", "mm-pane-toggle");
+    const body = el("div", "mm-pane-body");
+    const key = `mm.pane.${className}.collapsed`;
+
+    // chevron always points the way the pane will move
+    const apply = (collapsed) => {
+      pane.classList.toggle("collapsed", collapsed);
+      const pointsOut = side === "left" ? "\u2039" : "\u203a";   // ‹ / ›
+      const pointsIn = side === "left" ? "\u203a" : "\u2039";
+      toggle.textContent = collapsed ? pointsIn : pointsOut;
+      toggle.title = `${collapsed ? "Show" : "Hide"} ${title.toLowerCase()}`;
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+    };
+    toggle.onclick = () => {
+      const collapsed = !pane.classList.contains("collapsed");
+      apply(collapsed);
+      try {
+        localStorage.setItem(key, collapsed ? "1" : "0");
+      } catch (e) {
+        console.warn("could not persist pane state", e);
+      }
+    };
+
+    // chevron sits nearest the canvas: right of a left pane, left of a right one
+    head.append(...(side === "left" ? [label, toggle] : [toggle, label]));
+    pane.append(head, body);
+    apply(localStorage.getItem(key) === "1");
+    return { pane, body };
   }
 
   // ------------------------------------------------------------ top bar
